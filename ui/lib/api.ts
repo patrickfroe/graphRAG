@@ -1,61 +1,65 @@
-const BASE_URL = "http://localhost:8000";
+import type { ChatRequest, ChatResponse, GraphPreview } from "../types";
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${BASE_URL}${path}`, {
+const API_BASE = "http://localhost:8000";
+
+export type EvidenceResponse = {
+  chunks?: Array<{
+    chunk_id: string;
+    doc_id?: string;
+    title?: string;
+    text: string;
+  }>;
+  items?: Array<{
+    chunk_id: string;
+    doc_id?: string;
+    title?: string;
+    text: string;
+  }>;
+};
+
+async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+  const response = await fetch(input, {
+    ...init,
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
     },
-    ...init,
+    cache: "no-store",
   });
 
   if (!response.ok) {
     const message = await response.text();
-    throw new Error(`API request failed (${response.status}): ${message}`);
+    throw new Error(message || `Request failed with status ${response.status}`);
   }
 
   return response.json() as Promise<T>;
 }
 
-export function chat(query: string) {
-  return request("/chat", {
+export async function chat(payload: ChatRequest): Promise<ChatResponse> {
+  return requestJson<ChatResponse>(`${API_BASE}/chat`, {
     method: "POST",
-    body: JSON.stringify({ query }),
+    body: JSON.stringify(payload),
   });
 }
 
-export function ingest() {
-  return request("/ingest", {
-    method: "POST",
-  });
-}
-
-export function getGraphPreview(entityKeys?: string[]) {
-  return request("/graph-preview", {
-    method: "POST",
-    body: JSON.stringify(
-      entityKeys && entityKeys.length > 0 ? { entity_keys: entityKeys } : {}
-    ),
-  });
-}
-
-export { BASE_URL };
-import type { QueryRequest, QueryResponse } from "@/types";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-
-export async function runQuery(payload: QueryRequest): Promise<QueryResponse> {
-  const response = await fetch(`${API_BASE_URL}/query`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(payload)
-  });
-
-  if (!response.ok) {
-    throw new Error(`Request failed with status ${response.status}`);
+export async function graphPreview(seedEntityKeys: string[]): Promise<GraphPreview> {
+  const params = new URLSearchParams();
+  if (seedEntityKeys.length > 0) {
+    params.set("seed_entity_keys", seedEntityKeys.join(","));
   }
 
-  return (await response.json()) as QueryResponse;
+  return requestJson<GraphPreview>(`${API_BASE}/graph/preview?${params.toString()}`, {
+    method: "GET",
+  });
+}
+
+export async function evidence(chunkIds: string[]): Promise<EvidenceResponse> {
+  const params = new URLSearchParams();
+  if (chunkIds.length > 0) {
+    params.set("chunk_ids", chunkIds.join(","));
+  }
+
+  return requestJson<EvidenceResponse>(`${API_BASE}/evidence?${params.toString()}`, {
+    method: "GET",
+  });
 }
