@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GraphRAG Chat</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 2rem; }
+      #view-graph-btn { display: none; margin-top: 1rem; }
+      .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); }
+      .modal.open { display: flex; align-items: center; justify-content: center; }
+      .modal-content { background: #fff; padding: 1rem; width: min(90vw, 960px); height: min(85vh, 720px); display:flex; flex-direction:column; gap:.75rem; }
+      #graph-frame { width: 100%; flex: 1; border: 1px solid #ddd; }
+      #close-modal { align-self: flex-end; }
+    </style>
+  </head>
+  <body>
+    <h1>Chat</h1>
+    <p>Use <code>handleChatResponse(response)</code> to process incoming chat responses.</p>
+    <button id="view-graph-btn" type="button">View Graph</button>
+
+    <div id="graph-modal" class="modal" aria-hidden="true">
+      <div class="modal-content" role="dialog" aria-modal="true" aria-label="Graph preview">
+        <button id="close-modal" type="button">Close</button>
+        <iframe id="graph-frame" title="Graph preview"></iframe>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
