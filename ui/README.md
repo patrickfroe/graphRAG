@@ -1,18 +1,49 @@
 # graphRAG UI
 
-Next.js 14 Projekt mit App Router, TypeScript, Tailwind CSS und einem minimalen shadcn/ui Setup.
+Next.js-Frontend für Chat, Ingest und Graph-Ansicht.
 
-## Seiten
+## Voraussetzungen
 
-- `/chat` (Hauptseite)
-- `/ingest`
-- `/graph`
+- Node.js 18+
+- npm
+- Laufendes Backend auf `http://localhost:8000`
 
-## Start
+## Installation
 
 ```bash
 npm install
+```
+
+## Entwicklung starten
+
+```bash
 npm run dev
 ```
 
-Dann `http://localhost:3000/chat` öffnen.
+Danach öffnen:
+
+- `http://localhost:3000/chat` (Hauptseite)
+- `http://localhost:3000/ingest`
+- `http://localhost:3000/graph`
+
+## Produktionsbuild lokal prüfen
+
+```bash
+npm run typecheck
+npm run build
+npm run start
+```
+
+Dann ist das UI unter `http://localhost:3000` erreichbar.
+
+## Backend-Anbindung
+
+Das UI verwendet aktuell fest `http://localhost:8000` als API-Basis.
+
+Verwendete Endpunkte:
+
+- `POST /chat`
+- `GET /graph/preview`
+- `GET /evidence`
+
+Wenn du lokal testest, stelle sicher, dass dein Backend diese Endpunkte bereitstellt.
