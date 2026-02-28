@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import List
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 
@@ -38,6 +39,14 @@ class ChatResponse(BaseModel):
 
 
 app = FastAPI(title="graphRAG API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # In-memory store for demo purposes
 VECTOR_STORE: List[Document] = []
