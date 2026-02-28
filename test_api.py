@@ -13,12 +13,24 @@ def test_ingest_and_chat_returns_sources() -> None:
     assert ingest_response.status_code == 200
     assert ingest_response.json()["ingested"] == 2
 
-    chat_response = client.post("/chat", json={"question": "What uses retrieval?"})
+    chat_response = client.post(
+        "/chat",
+        json={
+            "query": "What uses retrieval?",
+            "top_k": 8,
+            "graph_hops": 2,
+            "use_graph": True,
+            "use_vector": True,
+            "return_debug": True,
+        },
+    )
     assert chat_response.status_code == 200
     payload = chat_response.json()
     assert "answer" in payload
+    assert isinstance(payload["citations"], list)
     assert isinstance(payload["sources"], list)
     assert payload["sources"]
+    assert "source_id" in payload["sources"][0]
 
 
 def test_ingest_accepts_utf8_txt_upload() -> None:

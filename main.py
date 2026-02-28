@@ -6,7 +6,7 @@ from typing import List
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 @dataclass
@@ -28,18 +28,54 @@ class IngestResponse(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    question: str
+    query: str | None = None
+    question: str | None = None
+    top_k: int = 3
+    graph_hops: int = 2
+    use_graph: bool = True
+    use_vector: bool = True
+    return_debug: bool = True
+
+    @model_validator(mode="after")
+    def ensure_query_present(self) -> "ChatRequest":
+        effective_query = (self.query or self.question or "").strip()
+        if not effective_query:
+            raise ValueError("Either 'query' or 'question' is required")
+
+        self.query = effective_query
+        return self
+
+
+class CitationItem(BaseModel):
+    marker: str
+    chunk_id: str
+    doc_id: str
+    score: float
 
 
 class SourceItem(BaseModel):
-    id: str
-    source: str
-    content: str
+    source_id: str
+    doc_id: str
+    chunk_id: str
+    score: float
+    title: str | None = None
+    snippet: str
+    text: str | None = None
+
+
+class EntityItem(BaseModel):
+    key: str
+    name: str
+    type: str
+    salience: float
+    source_chunk_ids: List[str] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):
     answer: str
-    sources: List[SourceItem]
+    citations: List[CitationItem] = Field(default_factory=list)
+    sources: List[SourceItem] = Field(default_factory=list)
+    entities: List[EntityItem] = Field(default_factory=list)
 
 
 app = FastAPI(title="graphRAG API")
@@ -174,7 +210,25 @@ async def ingest(request: Request) -> IngestResponse:
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest) -> ChatResponse:
-    docs = retrieval(payload.question)
-    answer = generate_answer(payload.question, docs)
-    sources = [SourceItem(id=d.id, source=d.source, content=d.content) for d in docs]
-    return ChatResponse(answer=answer, sources=sources)
+    question = payload.query or payload.question or ""
+    docs = retrieval(question, k=payload.top_k)
+    answer = generate_answer(question, docs)
+
+    sources = [
+        SourceItem(
+            source_id=f"S{index}",
+            doc_id=d.source,
+            chunk_id=d.id,
+            score=1.0,
+            title=d.source,
+            snippet=d.content,
+            text=d.content,
+        )
+        for index, d in enumerate(docs, start=1)
+    ]
+    citations = [
+        CitationItem(marker=f"[{source.source_id}]", chunk_id=source.chunk_id, doc_id=source.doc_id, score=source.score)
+        for source in sources
+    ]
+
+    return ChatResponse(answer=answer, citations=citations, sources=sources, entities=[])
