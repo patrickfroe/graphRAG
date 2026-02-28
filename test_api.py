@@ -35,6 +35,8 @@ def test_ingest_and_chat_returns_sources() -> None:
     assert isinstance(payload["sources"], list)
     assert payload["sources"]
     assert "source_id" in payload["sources"][0]
+    assert payload["graph_evidence"]["seed_entity_keys"]
+    assert payload["graph_evidence"]["preview"]["nodes"]
 
 
 def test_ingest_accepts_utf8_txt_upload() -> None:
