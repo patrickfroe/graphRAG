@@ -66,13 +66,28 @@ Diese API bietet:
 Starten:
 
 ```bash
-uvicorn app:app --reload --host 0.0.0.0 --port 8000
+uvicorn app:app --reload --host 0.0.0.0 --port 8080
 ```
 
 Schnelltest:
 
 ```bash
-curl "http://localhost:8000/graph/preview?entity_keys=A,B,C"
+curl "http://localhost:8080/graph/preview?entity_keys=A,B,C"
+```
+
+Wenn beide Python-Backends parallel laufen sollen:
+
+- `main.py` auf Port `8000`
+- `app.py` auf Port `8080`
+
+Beispiel mit zwei Terminals:
+
+```bash
+# Terminal 1
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+# Terminal 2
+uvicorn app:app --reload --host 0.0.0.0 --port 8080
 ```
 
 ## 3) Frontend starten (optional)
@@ -85,7 +100,7 @@ npm run dev
 
 Dann im Browser öffnen: `http://localhost:3000/chat`
 
-> Hinweis: Das UI nutzt standardmäßig `http://localhost:8000` als API-Basis.
+> Hinweis: Das UI nutzt standardmäßig `http://localhost:8000` als API-Basis (also `main.py`).
 
 ## 4) Empfohlene Checks
 
