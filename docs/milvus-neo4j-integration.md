@@ -107,6 +107,27 @@ RETURN d
 LIMIT 25;
 ```
 
+### 5.4 Milvus im Browser prüfen (Attu)
+
+Milvus selbst hat kein eingebautes Browser-UI wie Neo4j. Für eine visuelle Kontrolle kannst du **Attu** (offizielles Milvus-UI) nutzen.
+
+Attu starten:
+
+```bash
+docker run -d --name attu --network docker_default -p 3001:3000 zilliz/attu:v2.4
+```
+
+Dann im Browser öffnen: `http://localhost:3001`
+
+Verbindung in Attu anlegen:
+- **Address:** `milvus-standalone`
+- **Port:** `19530`
+- **Username/Password:** leer lassen (für diese lokale Compose-Konfiguration)
+
+Danach solltest du die Collection aus `MILVUS_COLLECTION` (Standard: `documents`) sehen und Einträge nach dem Ingest prüfen können.
+
+> Hinweis: Wenn Attu außerhalb des Compose-Netzwerks läuft, nutze statt `milvus-standalone` die Adresse `host.docker.internal` (oder `localhost`, je nach Setup).
+
 ## 6) Fehlerbehebung
 
 - **Connection refused zu Milvus (`localhost:19530`)**
