@@ -19,3 +19,13 @@ def test_ingest_and_chat_returns_sources() -> None:
     assert "answer" in payload
     assert isinstance(payload["sources"], list)
     assert payload["sources"]
+
+
+def test_ingest_accepts_utf8_txt_upload() -> None:
+    ingest_response = client.post(
+        "/ingest",
+        files={"files": ("example.txt", "Ein Testdokument für den Upload", "text/plain")},
+    )
+
+    assert ingest_response.status_code == 200
+    assert ingest_response.json()["ingested"] == 1
