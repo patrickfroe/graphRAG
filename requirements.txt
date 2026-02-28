@@ -1,3 +1,13 @@
+fastapi
+uvicorn[standard]
+pymilvus
+neo4j
+openai
+pydantic
+python-dotenv
+numpy
+tiktoken
+=======
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 neo4j==5.24.0
