@@ -9,26 +9,24 @@ except ModuleNotFoundError:  # pragma: no cover - local test fallback if fastapi
     FastAPI = None
 
 
+def _chat_impl(request: ChatRequest) -> ChatResponse:
+    retrieval_result = {
+        "answer": f"Antwort auf: {request.query}",
+        "sources": [],
+        "entities": [],
+        "graph_preview": {"nodes": [], "edges": []},
+    }
+    return retrieval_result_to_chat_response(retrieval_result)
+
+
 if FastAPI is not None:
     app = FastAPI()
 
     @app.post("/chat", response_model=ChatResponse)
     def chat(request: ChatRequest) -> ChatResponse:
-        retrieval_result = {
-            "answer": f"Antwort auf: {request.query}",
-            "sources": [],
-            "entities": [],
-            "graph_preview": {"nodes": [], "edges": []},
-        }
-        return retrieval_result_to_chat_response(retrieval_result)
+        return _chat_impl(request)
 else:
     app = None
 
     def chat(request: ChatRequest) -> ChatResponse:
-        retrieval_result = {
-            "answer": f"Antwort auf: {request.query}",
-            "sources": [],
-            "entities": [],
-            "graph_preview": {"nodes": [], "edges": []},
-        }
-        return retrieval_result_to_chat_response(retrieval_result)
+        return _chat_impl(request)
