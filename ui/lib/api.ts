@@ -63,3 +63,29 @@ export async function evidence(chunkIds: string[]): Promise<EvidenceResponse> {
     method: "GET",
   });
 }
+
+export async function ingestDocuments(documents: string[]): Promise<{ ingested: number }> {
+  const trimmedDocuments = documents.map((document) => document.trim()).filter(Boolean);
+
+  if (trimmedDocuments.length === 0) {
+    return { ingested: 0 };
+  }
+
+  try {
+    return await requestJson<{ ingested: number }>(`${API_BASE}/ingest`, {
+      method: "POST",
+      body: JSON.stringify({
+        documents: trimmedDocuments.map((text, index) => ({
+          id: `upload-${Date.now()}-${index + 1}`,
+          title: `Upload ${index + 1}`,
+          text,
+        })),
+      }),
+    });
+  } catch {
+    return requestJson<{ ingested: number }>(`${API_BASE}/ingest`, {
+      method: "POST",
+      body: JSON.stringify({ documents: trimmedDocuments }),
+    });
+  }
+}
