@@ -99,3 +99,9 @@ export type ChatResponse = {
     warnings?: string[];
   };
 };
+
+
+export type QueryResponse = {
+  answer: string;
+  sources: string[];
+};
