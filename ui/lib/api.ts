@@ -1,46 +1,65 @@
-export interface ChatRequest {
-  [key: string]: unknown;
-}
+import type { ChatRequest, ChatResponse, GraphPreview } from "../types";
 
-export interface ChatResponse {
-  [key: string]: unknown;
-}
+const API_BASE = "http://localhost:8000";
 
-export interface GraphPreview {
-  [key: string]: unknown;
-}
-
-const JSON_HEADERS: HeadersInit = {
-  'Content-Type': 'application/json',
+export type EvidenceResponse = {
+  chunks?: Array<{
+    chunk_id: string;
+    doc_id?: string;
+    title?: string;
+    text: string;
+  }>;
+  items?: Array<{
+    chunk_id: string;
+    doc_id?: string;
+    title?: string;
+    text: string;
+  }>;
 };
 
-async function postJson<TResponse>(path: string, body: unknown): Promise<TResponse> {
-  const response = await fetch(path, {
-    method: 'POST',
-    headers: JSON_HEADERS,
-    body: JSON.stringify(body),
+async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+  const response = await fetch(input, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    cache: "no-store",
   });
 
   if (!response.ok) {
-    const errorBody = await response.text().catch(() => '');
-    throw new Error(
-      `Request to ${path} failed (${response.status} ${response.statusText})${
-        errorBody ? `: ${errorBody}` : ''
-      }`,
-    );
+    const message = await response.text();
+    throw new Error(message || `Request failed with status ${response.status}`);
   }
 
-  return (await response.json()) as TResponse;
+  return response.json() as Promise<T>;
 }
 
-export function chat(req: ChatRequest): Promise<ChatResponse> {
-  return postJson<ChatResponse>('/api/chat', req);
+export async function chat(payload: ChatRequest): Promise<ChatResponse> {
+  return requestJson<ChatResponse>(`${API_BASE}/chat`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
-export function graphPreview(seed_entity_keys: string[], hops = 1): Promise<GraphPreview> {
-  return postJson<GraphPreview>('/api/graphPreview', { seed_entity_keys, hops });
+export async function graphPreview(seedEntityKeys: string[]): Promise<GraphPreview> {
+  const params = new URLSearchParams();
+  if (seedEntityKeys.length > 0) {
+    params.set("seed_entity_keys", seedEntityKeys.join(","));
+  }
+
+  return requestJson<GraphPreview>(`${API_BASE}/graph/preview?${params.toString()}`, {
+    method: "GET",
+  });
 }
 
-export function evidence(chunk_ids: string[]): Promise<{ chunks: any[] }> {
-  return postJson<{ chunks: any[] }>('/api/evidence', { chunk_ids });
+export async function evidence(chunkIds: string[]): Promise<EvidenceResponse> {
+  const params = new URLSearchParams();
+  if (chunkIds.length > 0) {
+    params.set("chunk_ids", chunkIds.join(","));
+  }
+
+  return requestJson<EvidenceResponse>(`${API_BASE}/evidence?${params.toString()}`, {
+    method: "GET",
+  });
 }
