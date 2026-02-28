@@ -51,3 +51,10 @@ class VectorStore:
         for hit in result[0]:
             hits.append({"id": hit.id, "score": float(hit.score), "text": hit.entity.get("text")})
         return hits
+
+    def delete(self, doc_id: str) -> int:
+        escaped_doc_id = doc_id.replace('"', '\\"')
+        result = self.collection.delete(expr=f'id == "{escaped_doc_id}"')
+        self.collection.flush()
+        deleted_count = getattr(result, "delete_count", 0)
+        return int(deleted_count)

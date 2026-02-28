@@ -13,7 +13,7 @@ body {
 }
 
 .ingest-card {
-  width: min(520px, 90vw);
+  width: min(760px, 95vw);
   background: #ffffff;
   border: 1px solid #dbe2ef;
   border-radius: 12px;
@@ -32,7 +32,7 @@ h1 {
   font-weight: 600;
 }
 
-input[type="file"] {
+input[type='file'] {
   border: 1px dashed #9aa6b2;
   border-radius: 8px;
   padding: 10px;
@@ -50,6 +50,14 @@ button {
   cursor: pointer;
 }
 
+button.secondary {
+  background: #334155;
+}
+
+button.danger {
+  background: #b91c1c;
+}
+
 button:disabled {
   cursor: wait;
   opacity: 0.7;
@@ -60,8 +68,67 @@ button:disabled {
   font-weight: 700;
 }
 
-.status.idle { color: #6b7280; }
-.status.ready { color: #1d4ed8; }
-.status.running { color: #d97706; }
-.status.success { color: #15803d; }
-.status.error { color: #b91c1c; }
+.status.idle {
+  color: #6b7280;
+}
+.status.ready {
+  color: #1d4ed8;
+}
+.status.running {
+  color: #d97706;
+}
+.status.success {
+  color: #15803d;
+}
+.status.error {
+  color: #b91c1c;
+}
+
+.documents-section {
+  margin-top: 12px;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 12px;
+}
+
+.documents-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.documents-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.document-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.document-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #dbe2ef;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+}
+
+.document-item.empty {
+  justify-content: center;
+  color: #64748b;
+}
+
+.document-info {
+  display: grid;
+}
+
+.document-info small {
+  color: #64748b;
+}

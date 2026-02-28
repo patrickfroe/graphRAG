@@ -9,6 +9,8 @@ from fastapi.testclient import TestClient
 def test_ingest_preflight_options_returns_ok() -> None:
     fake_ingest = types.ModuleType("app.ingest")
     fake_ingest.ingest_documents = lambda documents: {"ingested": len(documents)}
+    fake_ingest.list_ingested_documents = lambda limit=200: []
+    fake_ingest.delete_ingested_document = lambda doc_id: {"graph_deleted": 0, "vector_deleted": 0}
     fake_retrieval = types.ModuleType("app.retrieval")
     fake_retrieval.answer_query = lambda query, top_k=None: {"answer": query, "sources": []}
     fake_startup_checks = types.ModuleType("app.startup_checks")

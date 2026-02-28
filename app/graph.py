@@ -34,3 +34,26 @@ class GraphStore:
         """
         with self.driver.session() as session:
             session.run(query, source_id=source_id, target_id=target_id)
+
+    def list_documents(self, limit: int = 200) -> list[dict[str, str]]:
+        query = """
+        MATCH (d:Document)
+        RETURN d.doc_id AS doc_id, d.title AS title
+        ORDER BY d.doc_id ASC
+        LIMIT $limit
+        """
+        with self.driver.session() as session:
+            result = session.run(query, limit=limit)
+            return [{"doc_id": record["doc_id"], "title": record["title"]} for record in result]
+
+    def delete_document(self, doc_id: str) -> int:
+        query = """
+        MATCH (d:Document {doc_id: $doc_id})
+        DETACH DELETE d
+        RETURN COUNT(*) AS deleted_count
+        """
+        with self.driver.session() as session:
+            record = session.run(query, doc_id=doc_id).single()
+            if record is None:
+                return 0
+            return int(record["deleted_count"])
