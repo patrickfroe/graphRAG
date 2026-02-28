@@ -19,16 +19,98 @@
         <span class="field-label">Status indicator</span>
         <p id="statusIndicator" class="status idle">Idle</p>
       </div>
+
+      <section class="documents-section">
+        <div class="documents-header">
+          <h2>Hochgeladene Dokumente</h2>
+          <button id="refreshButton" type="button" class="secondary">Aktualisieren</button>
+        </div>
+        <ul id="documentList" class="document-list"></ul>
+      </section>
     </main>
 
     <script>
       const fileInput = document.getElementById('fileInput');
       const ingestButton = document.getElementById('ingestButton');
+      const refreshButton = document.getElementById('refreshButton');
       const statusIndicator = document.getElementById('statusIndicator');
+      const documentList = document.getElementById('documentList');
+      const API_BASE_URL = window.localStorage.getItem('graphragApiBaseUrl') || 'http://localhost:8001';
 
       const setStatus = (label, cls) => {
         statusIndicator.textContent = label;
         statusIndicator.className = `status ${cls}`;
+      };
+
+      const renderDocuments = (documents) => {
+        documentList.innerHTML = '';
+
+        if (documents.length === 0) {
+          const li = document.createElement('li');
+          li.className = 'document-item empty';
+          li.textContent = 'Noch keine Dokumente vorhanden.';
+          documentList.appendChild(li);
+          return;
+        }
+
+        for (const doc of documents) {
+          const li = document.createElement('li');
+          li.className = 'document-item';
+
+          const info = document.createElement('div');
+          info.className = 'document-info';
+          info.innerHTML = `<strong>${doc.title || doc.doc_id}</strong><small>${doc.doc_id}</small>`;
+
+          const deleteButton = document.createElement('button');
+          deleteButton.type = 'button';
+          deleteButton.className = 'danger';
+          deleteButton.textContent = 'Löschen';
+          deleteButton.addEventListener('click', async () => {
+            const confirmed = window.confirm(`Dokument "${doc.doc_id}" dauerhaft aus Milvus und Neo4j löschen?`);
+            if (!confirmed) {
+              return;
+            }
+
+            deleteButton.disabled = true;
+            setStatus(`Lösche ${doc.doc_id}…`, 'running');
+
+            try {
+              const response = await fetch(`${API_BASE_URL}/documents/${encodeURIComponent(doc.doc_id)}`, {
+                method: 'DELETE',
+              });
+
+              if (!response.ok) {
+                const detail = await response.text();
+                throw new Error(detail || `HTTP ${response.status}`);
+              }
+
+              setStatus(`Dokument ${doc.doc_id} gelöscht`, 'success');
+              await loadDocuments();
+            } catch (error) {
+              setStatus(`Löschen fehlgeschlagen: ${error.message}`, 'error');
+              deleteButton.disabled = false;
+            }
+          });
+
+          li.appendChild(info);
+          li.appendChild(deleteButton);
+          documentList.appendChild(li);
+        }
+      };
+
+      const loadDocuments = async () => {
+        try {
+          const response = await fetch(`${API_BASE_URL}/documents`);
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+
+          const payload = await response.json();
+          renderDocuments(payload.documents || []);
+        } catch (error) {
+          renderDocuments([]);
+          setStatus(`Dokumentliste nicht verfügbar: ${error.message}`, 'error');
+        }
       };
 
       fileInput.addEventListener('change', () => {
@@ -40,7 +122,7 @@
         }
       });
 
-      ingestButton.addEventListener('click', () => {
+      ingestButton.addEventListener('click', async () => {
         if (fileInput.files.length === 0) {
           setStatus('Please select at least one file', 'error');
           return;
@@ -49,11 +131,49 @@
         setStatus('Ingesting…', 'running');
         ingestButton.disabled = true;
 
-        setTimeout(() => {
+        try {
+          const documents = [];
+          for (const [index, file] of Array.from(fileInput.files).entries()) {
+            const text = (await file.text()).trim();
+            if (!text) {
+              continue;
+            }
+
+            documents.push({
+              id: `${file.name}-${Date.now()}-${index}`,
+              title: file.name,
+              text,
+            });
+          }
+
+          if (documents.length === 0) {
+            setStatus('Keine lesbaren Inhalte in den gewählten Dateien', 'error');
+            return;
+          }
+
+          const response = await fetch(`${API_BASE_URL}/ingest`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ documents }),
+          });
+
+          if (!response.ok) {
+            const detail = await response.text();
+            throw new Error(detail || `HTTP ${response.status}`);
+          }
+
           setStatus('Ingest completed', 'success');
+          fileInput.value = '';
+          await loadDocuments();
+        } catch (error) {
+          setStatus(`Ingest fehlgeschlagen: ${error.message}`, 'error');
+        } finally {
           ingestButton.disabled = false;
-        }, 1200);
+        }
       });
+
+      refreshButton.addEventListener('click', loadDocuments);
+      loadDocuments();
     </script>
   </body>
 </html>

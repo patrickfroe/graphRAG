@@ -1,10 +1,10 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from app.ingest import ingest_documents
+from app.ingest import delete_ingested_document, ingest_documents, list_ingested_documents
 from app.retrieval import answer_query
 from app.startup_checks import test_backend_connections
 
@@ -41,6 +41,12 @@ class QueryRequest(BaseModel):
     top_k: int | None = None
 
 
+class DeleteDocumentResponse(BaseModel):
+    deleted: bool
+    graph_deleted: int
+    vector_deleted: int
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
@@ -50,6 +56,21 @@ def health() -> dict:
 def ingest(payload: IngestRequest) -> dict:
     docs = [doc.model_dump() for doc in payload.documents]
     return ingest_documents(docs)
+
+
+@app.get("/documents")
+def documents(limit: int = 200) -> dict:
+    return {"documents": list_ingested_documents(limit=limit)}
+
+
+@app.delete("/documents/{doc_id}", response_model=DeleteDocumentResponse)
+def delete_document(doc_id: str) -> DeleteDocumentResponse:
+    result = delete_ingested_document(doc_id)
+    deleted = (result["graph_deleted"] + result["vector_deleted"]) > 0
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Document '{doc_id}' was not found")
+
+    return DeleteDocumentResponse(deleted=True, **result)
 
 
 @app.post("/query")

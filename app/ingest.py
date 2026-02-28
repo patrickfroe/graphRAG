@@ -21,3 +21,22 @@ def ingest_documents(documents: list[dict]) -> dict:
 
     graph_store.close()
     return {"ingested": len(documents)}
+
+def list_ingested_documents(limit: int = 200) -> list[dict[str, str]]:
+    graph_store = GraphStore()
+    try:
+        return graph_store.list_documents(limit=limit)
+    finally:
+        graph_store.close()
+
+
+def delete_ingested_document(doc_id: str) -> dict[str, int]:
+    graph_store = GraphStore()
+    vector_store = VectorStore()
+
+    try:
+        graph_deleted = graph_store.delete_document(doc_id)
+        vector_deleted = vector_store.delete(doc_id)
+        return {"graph_deleted": graph_deleted, "vector_deleted": vector_deleted}
+    finally:
+        graph_store.close()
