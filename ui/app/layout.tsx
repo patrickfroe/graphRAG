@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import "./globals.css";
 import type { ReactNode } from "react";
+import "./globals.css";
 
 export const metadata: Metadata = {
   title: "graphRAG UI",
@@ -16,7 +16,7 @@ const navItems = [
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="de">
+    <html lang="en">
       <body>
         <div className="mx-auto min-h-screen max-w-5xl p-6">
           <header className="mb-8 flex items-center justify-between border-b pb-4">
@@ -32,17 +32,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <main>{children}</main>
         </div>
       </body>
-import "./globals.css";
-
-export const metadata: Metadata = {
-  title: "graphRAG UI",
-  description: "Minimal graphRAG query interface"
-};
-
-export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <html lang="en">
-      <body>{children}</body>
     </html>
   );
 }
