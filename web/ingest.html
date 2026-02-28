@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ingest</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="ingest-card">
+      <h1>/ingest</h1>
+
+      <label class="field-label" for="fileInput">Upload files</label>
+      <input id="fileInput" type="file" multiple />
+
+      <button id="ingestButton" type="button">Ingest</button>
+
+      <div class="status-wrap">
+        <span class="field-label">Status indicator</span>
+        <p id="statusIndicator" class="status idle">Idle</p>
+      </div>
+    </main>
+
+    <script>
+      const fileInput = document.getElementById('fileInput');
+      const ingestButton = document.getElementById('ingestButton');
+      const statusIndicator = document.getElementById('statusIndicator');
+
+      const setStatus = (label, cls) => {
+        statusIndicator.textContent = label;
+        statusIndicator.className = `status ${cls}`;
+      };
+
+      fileInput.addEventListener('change', () => {
+        const count = fileInput.files.length;
+        if (count > 0) {
+          setStatus(`${count} file(s) ready`, 'ready');
+        } else {
+          setStatus('Idle', 'idle');
+        }
+      });
+
+      ingestButton.addEventListener('click', () => {
+        if (fileInput.files.length === 0) {
+          setStatus('Please select at least one file', 'error');
+          return;
+        }
+
+        setStatus('Ingesting…', 'running');
+        ingestButton.disabled = true;
+
+        setTimeout(() => {
+          setStatus('Ingest completed', 'success');
+          ingestButton.disabled = false;
+        }, 1200);
+      });
+    </script>
+  </body>
+</html>
