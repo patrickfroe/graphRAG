@@ -1,167 +1,92 @@
 # graphRAG
 
-A minimal chat service with **streaming responses**.
+Ein schlanker Einstieg für dieses Repository mit Fokus auf einer schnellen lokalen Installation.
 
-## What was added
+## Voraussetzungen
 
-- `POST /chat`: returns a full response in one JSON payload.
-- `POST /chat/stream`: streams the same response token-by-token using Server-Sent Events (SSE).
-A minimal response contract for GraphRAG-style chat results.
+- **Git** (zum Klonen des Repositories)
+- **Python 3.10+**
+- **pip** (Python-Paketmanager)
+- Optional: **venv** (für eine isolierte Umgebung)
 
-## Chat response layout
+## Installation Guide
 
-Every chat response should contain these sections:
-
-1. **Answer**: the natural-language response to the user.
-2. **Sources**: citations or references used to produce the answer.
-3. **Entities**: extracted named entities (people, orgs, systems, etc.).
-4. **View Graph**: graph-oriented relationships connecting the entities.
-
-## Markdown template
-
-Use the template in `templates/chat_response.md` to keep output consistent.
-# graphRAG FastAPI service
-
-## Endpoints
-
-- `POST /ingest`
-  - Body: `{"documents": ["text 1", "text 2"]}`
-  - Stores incoming documents in an in-memory index.
-
-- `POST /chat`
-  - Body: `{"question": "..."}`
-  - Flow:
-    1. `retrieval(question)`
-    2. `generate_answer(question, docs)`
-    3. Returns `answer` + `sources`
-
-## Run
+### 1) Repository klonen
 
 ```bash
-python -m graphrag.server
+git clone <REPO_URL>
+cd graphRAG
 ```
 
-Server starts at `http://127.0.0.1:8000`.
-
-## Example
-
-### Non-streaming
-
-```bash
-curl -s -X POST http://127.0.0.1:8000/chat \
-  -H 'content-type: application/json' \
-  -d '{"message":"How does graph retrieval help?"}'
-```
-
-### Streaming
-
-```bash
-curl -N -X POST http://127.0.0.1:8000/chat/stream \
-  -H 'content-type: application/json' \
-  -d '{"message":"How does graph retrieval help?"}'
-```
-
-uvicorn main:app --reload
-```
-# GraphRAG Python MVP
-
-Ein minimales GraphRAG-MVP mit:
-
-- **FastAPI** für HTTP-Endpunkte
-- **Neo4j** als Graph-Datenbank
-- **Milvus** (PyMilvus) als Vektor-Datenbank
-- **OpenAI API** für Embeddings + Chat
-
-## Projektstruktur
-
-```text
-/app/api.py
-/app/ingest.py
-/app/retrieval.py
-/app/graph.py
-/app/vectorstore.py
-/app/embeddings.py
-/app/llm.py
-/app/config.py
-/docker/docker-compose.yml
-requirements.txt
-README.md
-```
-
-## Setup
-
-1. Abhängigkeiten installieren:
+### 2) Virtuelle Umgebung erstellen und aktivieren (empfohlen)
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+```
+
+> Unter Windows (PowerShell):
+>
+> ```powershell
+> python -m venv .venv
+> .\.venv\Scripts\Activate.ps1
+> ```
+
+### 3) Abhängigkeiten installieren
+
+Falls eine `requirements.txt` vorhanden ist:
+
+```bash
 pip install -r requirements.txt
 ```
 
-2. `.env` erstellen:
-
-```env
-OPENAI_API_KEY=...
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small
-OPENAI_CHAT_MODEL=gpt-4o-mini
-
-NEO4J_URI=bolt://localhost:7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=password
-
-MILVUS_HOST=localhost
-MILVUS_PORT=19530
-MILVUS_COLLECTION=documents
-
-TOP_K=5
-```
-
-3. Neo4j + Milvus starten:
+Falls stattdessen ein `pyproject.toml` verwendet wird:
 
 ```bash
-docker compose -f docker/docker-compose.yml up -d
+pip install -e .
 ```
 
-4. API starten:
+### 4) Konfiguration
+
+Wenn das Projekt Umgebungsvariablen benötigt, eine `.env` Datei anlegen:
 
 ```bash
-uvicorn app.api:app --reload --port 8000
+cp .env.example .env
 ```
 
-## API-Endpunkte
+Danach die Werte in `.env` anpassen (z. B. API Keys, Modellnamen, Datenbank-URL).
 
-### Health
+### 5) Anwendung starten
+
+Je nach Projektstruktur z. B.:
 
 ```bash
-curl http://localhost:8000/health
+python main.py
 ```
 
-### Ingest
+oder
 
 ```bash
-curl -X POST http://localhost:8000/ingest \
-  -H "Content-Type: application/json" \
-  -d '{
-    "documents": [
-      {"id": "doc-1", "title": "GraphRAG", "text": "GraphRAG kombiniert Graphen und Vektorsuche."},
-      {"id": "doc-2", "title": "Neo4j", "text": "Neo4j ist eine Graphdatenbank."}
-    ]
-  }'
+python -m src.main
 ```
 
-### Query
+## Verifikation
+
+Nach dem Start sollten keine Import- oder Konfigurationsfehler erscheinen.
+
+Optionaler schneller Check:
 
 ```bash
-curl -X POST http://localhost:8000/query \
-  -H "Content-Type: application/json" \
-  -d '{"query": "Was ist GraphRAG?", "top_k": 3}'
+python --version
+pip --version
 ```
 
-## Hinweise
+## Troubleshooting
 
-- Dieses Repo ist ein **MVP**. Für Produktion fehlen u. a.:
-  - Authentifizierung
-  - robustes Chunking / Parsing
-  - Retry / Error-Handling
-  - Monitoring / Tracing
-  - Migrations & schema management
+- **`ModuleNotFoundError`**: Prüfen, ob die virtuelle Umgebung aktiv ist und Dependencies installiert wurden.
+- **`Permission denied`**: Bei Unix-Systemen Dateirechte prüfen (`chmod +x ...`).
+- **Falsche Python-Version**: Mit `python --version` prüfen und ggf. eine passende Version verwenden.
+
+---
+
+Wenn du magst, kann ich als nächsten Schritt eine projektspezifische README-Version erstellen (mit den tatsächlichen Start-, Test- und Build-Befehlen dieses Repos).
