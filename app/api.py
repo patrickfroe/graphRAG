@@ -1,11 +1,21 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.ingest import ingest_documents
 from app.retrieval import answer_query
+from app.startup_checks import test_backend_connections
 
-app = FastAPI(title="GraphRAG MVP")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    test_backend_connections()
+    yield
+
+
+app = FastAPI(title="GraphRAG MVP", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
