@@ -109,6 +109,12 @@ Eine Schritt-für-Schritt-Anleitung zum Konfigurieren von OpenAI (`OPENAI_API_KE
 
 - `docs/openai-ressourcen.md`
 
+## 6) Milvus + Neo4j integrieren
+
+Eine Schritt-für-Schritt-Anleitung für lokalen Start per Docker, `.env`-Konfiguration und Integrationstest (`/ingest`, `/chat`) findest du hier:
+
+- `docs/milvus-neo4j-integration.md`
+
 ## Häufige Probleme
 
 - **`ModuleNotFoundError` in Python**: sicherstellen, dass `.venv` aktiv ist und `pip install -r requirements.txt` ausgeführt wurde.
