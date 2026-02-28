@@ -1,0 +1,6 @@
+Titel: Partnerschaft zwischen DeepDrive und TechDynamics
+
+Vor der Übernahme durch Novatech kooperierte DeepDrive Analytics mit der TechDynamics AG.
+Die Zusammenarbeit betraf Cloud-Infrastruktur für Machine-Learning-Modelle.
+
+Ansprechpartner bei TechDynamics war Sabine Roth.
