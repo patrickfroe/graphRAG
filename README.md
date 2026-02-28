@@ -1,92 +1,110 @@
 # graphRAG
 
-Ein schlanker Einstieg für dieses Repository mit Fokus auf einer schnellen lokalen Installation.
+Praktische Anleitung, um dieses Repository lokal zu starten (Python-API + optionales Next.js-UI).
+
+## Projektstruktur (relevant zum Starten)
+
+- `main.py`: einfache FastAPI-Demo mit `/ingest` und `/chat`
+- `app.py`: FastAPI-Endpunkt `/graph/preview`
+- `ui/`: Next.js Frontend (`/chat`, `/ingest`, `/graph`)
 
 ## Voraussetzungen
 
-- **Git** (zum Klonen des Repositories)
-- **Python 3.10+**
-- **pip** (Python-Paketmanager)
-- Optional: **venv** (für eine isolierte Umgebung)
+- Python **3.10+**
+- Node.js **18+** (für das UI)
+- npm
 
-## Installation Guide
-
-### 1) Repository klonen
-
-```bash
-git clone <REPO_URL>
-cd graphRAG
-```
-
-### 2) Virtuelle Umgebung erstellen und aktivieren (empfohlen)
+## 1) Python-Umgebung einrichten
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-```
-
-> Unter Windows (PowerShell):
->
-> ```powershell
-> python -m venv .venv
-> .\.venv\Scripts\Activate.ps1
-> ```
-
-### 3) Abhängigkeiten installieren
-
-Falls eine `requirements.txt` vorhanden ist:
-
-```bash
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Falls stattdessen ein `pyproject.toml` verwendet wird:
+Windows (PowerShell):
 
-```bash
-pip install -e .
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install --upgrade pip
+pip install -r requirements.txt
 ```
 
-### 4) Konfiguration
+## 2) Backend starten
 
-Wenn das Projekt Umgebungsvariablen benötigt, eine `.env` Datei anlegen:
+### Option A (empfohlen für Chat-Demo): `main.py`
 
-```bash
-cp .env.example .env
-```
+Diese API bietet:
+- `POST /ingest`
+- `POST /chat`
 
-Danach die Werte in `.env` anpassen (z. B. API Keys, Modellnamen, Datenbank-URL).
-
-### 5) Anwendung starten
-
-Je nach Projektstruktur z. B.:
+Starten:
 
 ```bash
-python main.py
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-oder
+Schnelltest in zweitem Terminal:
 
 ```bash
-python -m src.main
+curl -X POST http://localhost:8000/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"documents":["FastAPI builds APIs quickly","GraphRAG uses retrieval"]}'
+
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What uses retrieval?"}'
 ```
 
-## Verifikation
+### Option B (Graph-Preview einzeln): `app.py`
 
-Nach dem Start sollten keine Import- oder Konfigurationsfehler erscheinen.
+Diese API bietet:
+- `GET /graph/preview?entity_keys=A,B,C`
 
-Optionaler schneller Check:
+Starten:
 
 ```bash
-python --version
-pip --version
+uvicorn app:app --reload --host 0.0.0.0 --port 8000
 ```
 
-## Troubleshooting
+Schnelltest:
 
-- **`ModuleNotFoundError`**: Prüfen, ob die virtuelle Umgebung aktiv ist und Dependencies installiert wurden.
-- **`Permission denied`**: Bei Unix-Systemen Dateirechte prüfen (`chmod +x ...`).
-- **Falsche Python-Version**: Mit `python --version` prüfen und ggf. eine passende Version verwenden.
+```bash
+curl "http://localhost:8000/graph/preview?entity_keys=A,B,C"
+```
 
----
+## 3) Frontend starten (optional)
 
-Wenn du magst, kann ich als nächsten Schritt eine projektspezifische README-Version erstellen (mit den tatsächlichen Start-, Test- und Build-Befehlen dieses Repos).
+```bash
+cd ui
+npm install
+npm run dev
+```
+
+Dann im Browser öffnen: `http://localhost:3000/chat`
+
+> Hinweis: Das UI nutzt standardmäßig `http://localhost:8000` als API-Basis.
+
+## 4) Empfohlene Checks
+
+Backend:
+
+```bash
+pytest
+```
+
+Frontend:
+
+```bash
+cd ui
+npm run typecheck
+npm run build
+```
+
+## Häufige Probleme
+
+- **`ModuleNotFoundError` in Python**: sicherstellen, dass `.venv` aktiv ist und `pip install -r requirements.txt` ausgeführt wurde.
+- **Port bereits belegt**: Backend auf anderem Port starten (z. B. `--port 8001`) und ggf. UI-Konfiguration anpassen.
+- **UI kann Backend nicht erreichen**: prüfen, ob Backend wirklich auf `localhost:8000` läuft.
