@@ -48,7 +48,9 @@ export default function IngestPage() {
   return (
     <section className="mx-auto w-full max-w-2xl space-y-4 rounded border p-5">
       <h2 className="text-2xl font-semibold">Ingest</h2>
-      <p className="text-muted-foreground">Lade Textdateien hoch, damit sie für den Chat indexiert werden.</p>
+      <p className="text-muted-foreground">
+        Lade UTF-8 Textdateien hoch, damit sie für den Chat indexiert werden.
+      </p>
 
       <div className="space-y-2 rounded border border-dashed p-4">
         <label htmlFor="ingest-files" className="block text-sm font-medium">
@@ -64,7 +66,7 @@ export default function IngestPage() {
           disabled={loading}
         />
 
-        <p className="text-xs text-gray-500">Unterstützt: .txt, .md, .csv, .json</p>
+        <p className="text-xs text-gray-500">Unterstützt: .txt, .md, .csv, .json (UTF-8)</p>
       </div>
 
       {files.length > 0 && (
