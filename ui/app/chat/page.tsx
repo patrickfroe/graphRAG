@@ -1,192 +1,193 @@
-'use client';
+"use client";
 
-import { FormEvent, useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from "react";
 
-type ChatMessage = {
-  role: 'user' | 'assistant';
-  content: string;
+import ChatPanel, { type ChatMessage } from "../../components/ChatPanel";
+import EntitiesPanel from "../../components/EntitiesPanel";
+import EvidenceDrawer from "../../components/EvidenceDrawer";
+import GraphModal from "../../components/GraphModal";
+import SourcesPanel, { type SourcesPanelHandle } from "../../components/SourcesPanel";
+import TracePanel from "../../components/TracePanel";
+import { chat, evidence, graphPreview, type EvidenceResponse } from "../../lib/api";
+import type { ChatResponse, GraphPreview } from "../../types";
+import type { ChatControls } from "../../components/ControlsBar";
+
+type TabKey = "sources" | "graph" | "trace";
+
+const initialControls: ChatControls = {
+  topK: 8,
+  graphHops: 2,
+  useGraph: true,
+  useVector: true,
+  returnDebug: true,
 };
-
-type Source = {
-  id: string;
-  title: string;
-};
-
-type Entity = {
-  id: string;
-  label: string;
-};
-
-type GraphPreview = {
-  nodes: number;
-  edges: number;
-};
-
-type TraceStep = {
-  step: string;
-  detail: string;
-};
-
-type ChatResponse = {
-  answer: string;
-  sources: Source[];
-  entities: Entity[];
-  graphPreview: GraphPreview | null;
-  trace: TraceStep[];
-};
-
-const api = {
-  async chat(query: string): Promise<ChatResponse> {
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query }),
-    });
-
-    if (!res.ok) {
-      throw new Error('Chat request failed.');
-    }
-
-    return res.json();
-  },
-};
-
-function RightPanel({ response }: { response: ChatResponse | null }) {
-  if (!response) {
-    return <aside className="rounded border p-4 text-sm text-zinc-500">Noch keine Antwort.</aside>;
-  }
-
-  return (
-    <aside className="space-y-4 rounded border p-4 text-sm">
-      <section>
-        <h3 className="font-semibold">Sources</h3>
-        <ul className="mt-2 list-disc pl-5">
-          {response.sources.map((source) => (
-            <li key={source.id}>{source.title}</li>
-          ))}
-        </ul>
-      </section>
-
-      <section>
-        <h3 className="font-semibold">Entities</h3>
-        <ul className="mt-2 list-disc pl-5">
-          {response.entities.map((entity) => (
-            <li key={entity.id}>{entity.label}</li>
-          ))}
-        </ul>
-      </section>
-
-      <section>
-        <h3 className="font-semibold">Graph preview</h3>
-        {response.graphPreview ? (
-          <p className="mt-2">
-            Nodes: {response.graphPreview.nodes} · Edges: {response.graphPreview.edges}
-          </p>
-        ) : (
-          <p className="mt-2 text-zinc-500">No graph preview available.</p>
-        )}
-      </section>
-
-      <section>
-        <h3 className="font-semibold">Trace</h3>
-        <ul className="mt-2 space-y-1">
-          {response.trace.map((trace, index) => (
-            <li key={`${trace.step}-${index}`}>
-              <span className="font-medium">{trace.step}:</span> {trace.detail}
-            </li>
-          ))}
-        </ul>
-      </section>
-    </aside>
-  );
-}
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [lastResponse, setLastResponse] = useState<ChatResponse | null>(null);
+  const [activeTab, setActiveTab] = useState<TabKey>("sources");
+  const [controls, setControls] = useState<ChatControls>(initialControls);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState('');
+  const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
+  const [graphOpen, setGraphOpen] = useState(false);
+  const [graphData, setGraphData] = useState<GraphPreview | undefined>(undefined);
 
-  async function sendQuery(nextQuery: string) {
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const [evidenceItems, setEvidenceItems] = useState<EvidenceResponse["chunks"]>([]);
+
+  const sourcePanelRef = useRef<SourcesPanelHandle>(null);
+
+  const latestResponse = useMemo<ChatResponse | undefined>(() => {
+    return [...messages].reverse().find((message) => message.role === "assistant")?.response;
+  }, [messages]);
+
+  const handleSend = async (query: string) => {
     setLoading(true);
     setError(null);
 
-    try {
-      const response = await api.chat(nextQuery);
+    setMessages((current) => [...current, { id: crypto.randomUUID(), role: "user", content: query }]);
 
-      setMessages((prev) => [
-        ...prev,
-        { role: 'user', content: nextQuery },
-        { role: 'assistant', content: response.answer },
+    try {
+      const response = await chat({
+        query,
+        top_k: controls.topK,
+        graph_hops: controls.graphHops,
+        use_graph: controls.useGraph,
+        use_vector: controls.useVector,
+        return_debug: controls.returnDebug,
+      });
+
+      setMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: response.answer,
+          response,
+        },
       ]);
 
-      setLastResponse(response);
+      setGraphData(response.graph_evidence?.preview);
+      setActiveTab("sources");
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      setError(message);
+      setError(err instanceof Error ? err.message : "Chat request failed");
     } finally {
       setLoading(false);
     }
-  }
+  };
 
-  const controls = useMemo(
-    () => ({
-      sendQuery,
-      clear: () => {
-        setMessages([]);
-        setLastResponse(null);
-        setError(null);
-      },
-      loading,
-    }),
-    [loading],
-  );
+  const handleCitationClick = (sourceId: string) => {
+    setActiveTab("sources");
+    setActiveSourceId(sourceId);
+    requestAnimationFrame(() => {
+      sourcePanelRef.current?.scrollToSource(sourceId);
+    });
+  };
 
-  function onSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const trimmed = query.trim();
-    if (!trimmed || loading) return;
-    controls.sendQuery(trimmed);
-    setQuery('');
-  }
+  const handleOpenEvidence = async (chunkId: string) => {
+    setEvidenceOpen(true);
+    setEvidenceLoading(true);
+    setEvidenceError(null);
+
+    try {
+      const response = await evidence([chunkId]);
+      setEvidenceItems(response.chunks ?? response.items ?? []);
+    } catch (err) {
+      setEvidenceError(err instanceof Error ? err.message : "Evidence request failed");
+      setEvidenceItems([]);
+    } finally {
+      setEvidenceLoading(false);
+    }
+  };
+
+  const handleLoadGraph = async () => {
+    const seedKeys = latestResponse?.graph_evidence?.seed_entity_keys ?? [];
+    if (seedKeys.length === 0) {
+      setError("Keine seed_entity_keys verfügbar.");
+      return;
+    }
+
+    setError(null);
+    try {
+      const preview = await graphPreview(seedKeys);
+      setGraphData(preview);
+      setGraphOpen(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Graph preview failed");
+    }
+  };
 
   return (
-    <main className="mx-auto grid max-w-6xl gap-6 p-6 md:grid-cols-[2fr_1fr]">
-      <section className="space-y-4">
-        <form onSubmit={onSubmit} className="flex gap-2">
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            className="flex-1 rounded border px-3 py-2"
-            placeholder="Frage stellen …"
-          />
-          <button disabled={loading} className="rounded bg-black px-4 py-2 text-white disabled:opacity-50">
-            {loading ? 'Lädt…' : 'Senden'}
-          </button>
-          <button
-            type="button"
-            onClick={controls.clear}
-            className="rounded border px-4 py-2"
-            disabled={loading && messages.length === 0}
-          >
-            Reset
-          </button>
-        </form>
+    <main className="grid h-screen grid-cols-1 gap-3 p-3 lg:grid-cols-[1.2fr_1fr]">
+      <ChatPanel
+        messages={messages}
+        loading={loading}
+        error={error}
+        controls={controls}
+        onControlsChange={setControls}
+        onSend={handleSend}
+        onCitationClick={handleCitationClick}
+      />
 
-        {error && <p className="rounded border border-red-300 bg-red-50 p-3 text-red-700">{error}</p>}
-
-        <ul className="space-y-2">
-          {messages.map((message, index) => (
-            <li key={`${message.role}-${index}`} className="rounded border p-3">
-              <p className="text-xs uppercase text-zinc-500">{message.role}</p>
-              <p>{message.content}</p>
-            </li>
+      <section className="flex h-full flex-col rounded border p-3">
+        <div className="mb-3 flex gap-2">
+          {(
+            [
+              ["sources", "Sources"],
+              ["graph", "Graph"],
+              ["trace", "Trace"],
+            ] as Array<[TabKey, string]>
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              className={`rounded border px-3 py-1 text-sm ${activeTab === key ? "bg-black text-white" : ""}`}
+              onClick={() => setActiveTab(key)}
+            >
+              {label}
+            </button>
           ))}
-        </ul>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {activeTab === "sources" && (
+            <div className="grid h-full grid-cols-1 gap-3 xl:grid-cols-2">
+              <SourcesPanel
+                ref={sourcePanelRef}
+                sources={latestResponse?.sources ?? []}
+                activeSourceId={activeSourceId}
+                onOpenEvidence={handleOpenEvidence}
+              />
+              <EntitiesPanel entities={latestResponse?.entities ?? []} />
+            </div>
+          )}
+
+          {activeTab === "graph" && (
+            <div className="space-y-3 rounded border p-3">
+              <p className="text-sm text-gray-600">
+                Nodes: {graphData?.nodes.length ?? 0} · Edges: {graphData?.edges.length ?? 0}
+              </p>
+              <button type="button" className="rounded bg-black px-3 py-1 text-white" onClick={handleLoadGraph}>
+                Graph Preview öffnen
+              </button>
+            </div>
+          )}
+
+          {activeTab === "trace" && <TracePanel trace={latestResponse?.trace} />}
+        </div>
       </section>
 
-      <RightPanel response={lastResponse} />
+      <GraphModal open={graphOpen} preview={graphData} onClose={() => setGraphOpen(false)} />
+
+      <EvidenceDrawer
+        open={evidenceOpen}
+        loading={evidenceLoading}
+        error={evidenceError}
+        items={evidenceItems ?? []}
+        onClose={() => setEvidenceOpen(false)}
+      />
     </main>
   );
 }
