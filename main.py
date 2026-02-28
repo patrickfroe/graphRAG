@@ -71,11 +71,34 @@ class EntityItem(BaseModel):
     source_chunk_ids: List[str] = Field(default_factory=list)
 
 
+class GraphNodeItem(BaseModel):
+    id: str
+    label: str
+    type: str = "entity"
+
+
+class GraphEdgeItem(BaseModel):
+    source: str
+    target: str
+    label: str = "related_to"
+
+
+class GraphPreviewItem(BaseModel):
+    nodes: List[GraphNodeItem] = Field(default_factory=list)
+    edges: List[GraphEdgeItem] = Field(default_factory=list)
+
+
+class GraphEvidenceItem(BaseModel):
+    seed_entity_keys: List[str] = Field(default_factory=list)
+    preview: GraphPreviewItem = Field(default_factory=GraphPreviewItem)
+
+
 class ChatResponse(BaseModel):
     answer: str
     citations: List[CitationItem] = Field(default_factory=list)
     sources: List[SourceItem] = Field(default_factory=list)
     entities: List[EntityItem] = Field(default_factory=list)
+    graph_evidence: GraphEvidenceItem = Field(default_factory=GraphEvidenceItem)
 
 
 app = FastAPI(title="graphRAG API")
@@ -257,7 +280,19 @@ def chat(payload: ChatRequest) -> ChatResponse:
         for source in sources
     ]
 
-    return ChatResponse(answer=answer, citations=citations, sources=sources, entities=[])
+    seed_entity_keys = [source.doc_id for source in sources]
+    preview_data = build_graph_preview(seed_entity_keys)
+
+    return ChatResponse(
+        answer=answer,
+        citations=citations,
+        sources=sources,
+        entities=[],
+        graph_evidence=GraphEvidenceItem(
+            seed_entity_keys=seed_entity_keys,
+            preview=GraphPreviewItem(**preview_data),
+        ),
+    )
 
 
 @app.get("/graph/preview")
