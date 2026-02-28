@@ -1,3 +1,7 @@
+import { redirect } from "next/navigation";
+
+export default function HomePage() {
+  redirect("/chat");
 import { QueryPanel } from "@/components/QueryPanel";
 
 export default function HomePage() {
