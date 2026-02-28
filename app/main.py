@@ -5,8 +5,10 @@ from app.schemas import ChatRequest, ChatResponse
 
 try:
     from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
 except ModuleNotFoundError:  # pragma: no cover - local test fallback if fastapi isn't installed.
     FastAPI = None
+    CORSMiddleware = None
 
 
 def _chat_impl(request: ChatRequest) -> ChatResponse:
@@ -21,6 +23,13 @@ def _chat_impl(request: ChatRequest) -> ChatResponse:
 
 if FastAPI is not None:
     app = FastAPI()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.post("/chat", response_model=ChatResponse)
     def chat(request: ChatRequest) -> ChatResponse:
