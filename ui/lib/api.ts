@@ -1,4 +1,4 @@
-import type { ChatRequest, ChatResponse, GraphPreview } from "../types";
+import type { ChatRequest, ChatResponse, GraphPreview, QueryResponse } from "../types";
 
 const API_BASE = "http://localhost:8000";
 
@@ -45,7 +45,7 @@ export async function chat(payload: ChatRequest): Promise<ChatResponse> {
 export async function graphPreview(seedEntityKeys: string[]): Promise<GraphPreview> {
   const params = new URLSearchParams();
   if (seedEntityKeys.length > 0) {
-    params.set("seed_entity_keys", seedEntityKeys.join(","));
+    params.set("entity_keys", seedEntityKeys.join(","));
   }
 
   return requestJson<GraphPreview>(`${API_BASE}/graph/preview?${params.toString()}`, {
@@ -88,4 +88,13 @@ export async function ingestDocuments(documents: string[]): Promise<{ ingested: 
       body: JSON.stringify({ documents: trimmedDocuments }),
     });
   }
+}
+
+
+export async function runQuery(payload: { query: string }): Promise<QueryResponse> {
+  const response = await chat({ query: payload.query });
+  return {
+    answer: response.answer,
+    sources: response.sources.map((source) => source.source_id || source.chunk_id),
+  };
 }

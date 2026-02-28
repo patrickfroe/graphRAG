@@ -70,6 +70,11 @@ export default function ChatPage() {
       ]);
 
       setGraphData(response.graph_evidence?.preview);
+      window.localStorage.setItem("graph-preview", JSON.stringify(response.graph_evidence?.preview ?? null));
+      window.localStorage.setItem(
+        "graph-seed-keys",
+        JSON.stringify(response.graph_evidence?.seed_entity_keys ?? []),
+      );
       setActiveTab("sources");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Chat request failed");
