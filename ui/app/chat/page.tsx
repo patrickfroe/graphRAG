@@ -1,185 +1,193 @@
-'use client';
+"use client";
 
-import { useCallback, useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from "react";
 
-type Role = 'user' | 'assistant';
+import ChatPanel, { type ChatMessage } from "../../components/ChatPanel";
+import EntitiesPanel from "../../components/EntitiesPanel";
+import EvidenceDrawer from "../../components/EvidenceDrawer";
+import GraphModal from "../../components/GraphModal";
+import SourcesPanel, { type SourcesPanelHandle } from "../../components/SourcesPanel";
+import TracePanel from "../../components/TracePanel";
+import { chat, evidence, graphPreview, type EvidenceResponse } from "../../lib/api";
+import type { ChatResponse, GraphPreview } from "../../types";
+import type { ChatControls } from "../../components/ControlsBar";
 
-type Message = {
-  id: string;
-  role: Role;
-  content: string;
+type TabKey = "sources" | "graph" | "trace";
+
+const initialControls: ChatControls = {
+  topK: 8,
+  graphHops: 2,
+  useGraph: true,
+  useVector: true,
+  returnDebug: true,
 };
-
-type Controls = {
-  top_k: number;
-  hops: number;
-  temperature: number;
-};
-
-type ChatResponse = {
-  answer: string;
-  sources?: string[];
-  metadata?: Record<string, unknown>;
-};
-
-const api = {
-  async chat(payload: {
-    query: string;
-    messages: Message[];
-    controls: Controls;
-  }): Promise<ChatResponse> {
-    const response = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-      throw new Error('Chat request failed');
-    }
-
-    return response.json();
-  },
-};
-
-function RightPanel({ data }: { data: ChatResponse | null }) {
-  return (
-    <aside>
-      <h2>Last Response</h2>
-      {!data ? (
-        <p>No response yet.</p>
-      ) : (
-        <div>
-          <p>{data.answer}</p>
-          {data.sources?.length ? (
-            <ul>
-              {data.sources.map((source) => (
-                <li key={source}>{source}</li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      )}
-    </aside>
-  );
-}
 
 export default function ChatPage() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [lastResponse, setLastResponse] = useState<ChatResponse | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [activeTab, setActiveTab] = useState<TabKey>("sources");
+  const [controls, setControls] = useState<ChatControls>(initialControls);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState('');
-  const [controls, setControls] = useState<Controls>({
-    top_k: 5,
-    hops: 2,
-    temperature: 0.2,
-  });
+  const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
+  const [graphOpen, setGraphOpen] = useState(false);
+  const [graphData, setGraphData] = useState<GraphPreview | undefined>(undefined);
 
-  const canSend = useMemo(() => query.trim().length > 0 && !loading, [query, loading]);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const [evidenceItems, setEvidenceItems] = useState<EvidenceResponse["chunks"]>([]);
 
-  const sendQuery = useCallback(async () => {
-    if (!query.trim() || loading) {
-      return;
-    }
+  const sourcePanelRef = useRef<SourcesPanelHandle>(null);
 
-    const userMessage: Message = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: query,
-    };
+  const latestResponse = useMemo<ChatResponse | undefined>(() => {
+    return [...messages].reverse().find((message) => message.role === "assistant")?.response;
+  }, [messages]);
 
-    const nextMessages = [...messages, userMessage];
-
-    setMessages(nextMessages);
+  const handleSend = async (query: string) => {
     setLoading(true);
     setError(null);
 
+    setMessages((current) => [...current, { id: crypto.randomUUID(), role: "user", content: query }]);
+
     try {
-      const response = await api.chat({
+      const response = await chat({
         query,
-        messages: nextMessages,
-        controls,
+        top_k: controls.topK,
+        graph_hops: controls.graphHops,
+        use_graph: controls.useGraph,
+        use_vector: controls.useVector,
+        return_debug: controls.returnDebug,
       });
 
-      setLastResponse(response);
-      setMessages((prev) => [
-        ...prev,
+      setMessages((current) => [
+        ...current,
         {
           id: crypto.randomUUID(),
-          role: 'assistant',
+          role: "assistant",
           content: response.answer,
+          response,
         },
       ]);
-      setQuery('');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unknown error');
+
+      setGraphData(response.graph_evidence?.preview);
+      setActiveTab("sources");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Chat request failed");
     } finally {
       setLoading(false);
     }
-  }, [controls, loading, messages, query]);
+  };
+
+  const handleCitationClick = (sourceId: string) => {
+    setActiveTab("sources");
+    setActiveSourceId(sourceId);
+    requestAnimationFrame(() => {
+      sourcePanelRef.current?.scrollToSource(sourceId);
+    });
+  };
+
+  const handleOpenEvidence = async (chunkId: string) => {
+    setEvidenceOpen(true);
+    setEvidenceLoading(true);
+    setEvidenceError(null);
+
+    try {
+      const response = await evidence([chunkId]);
+      setEvidenceItems(response.chunks ?? response.items ?? []);
+    } catch (err) {
+      setEvidenceError(err instanceof Error ? err.message : "Evidence request failed");
+      setEvidenceItems([]);
+    } finally {
+      setEvidenceLoading(false);
+    }
+  };
+
+  const handleLoadGraph = async () => {
+    const seedKeys = latestResponse?.graph_evidence?.seed_entity_keys ?? [];
+    if (seedKeys.length === 0) {
+      setError("Keine seed_entity_keys verfügbar.");
+      return;
+    }
+
+    setError(null);
+    try {
+      const preview = await graphPreview(seedKeys);
+      setGraphData(preview);
+      setGraphOpen(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Graph preview failed");
+    }
+  };
 
   return (
-    <main style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
-      <section>
-        <h1>Chat</h1>
+    <main className="grid h-screen grid-cols-1 gap-3 p-3 lg:grid-cols-[1.2fr_1fr]">
+      <ChatPanel
+        messages={messages}
+        loading={loading}
+        error={error}
+        controls={controls}
+        onControlsChange={setControls}
+        onSend={handleSend}
+        onCitationClick={handleCitationClick}
+      />
 
-        <div>
-          <label>
-            top_k
-            <input
-              type="number"
-              value={controls.top_k}
-              onChange={(event) =>
-                setControls((prev) => ({ ...prev, top_k: Number(event.target.value) }))
-              }
-            />
-          </label>
-          <label>
-            hops
-            <input
-              type="number"
-              value={controls.hops}
-              onChange={(event) =>
-                setControls((prev) => ({ ...prev, hops: Number(event.target.value) }))
-              }
-            />
-          </label>
-          <label>
-            temperature
-            <input
-              type="number"
-              step="0.1"
-              value={controls.temperature}
-              onChange={(event) =>
-                setControls((prev) => ({ ...prev, temperature: Number(event.target.value) }))
-              }
-            />
-          </label>
-        </div>
-
-        <div>
-          {messages.map((message) => (
-            <p key={message.id}>
-              <strong>{message.role}:</strong> {message.content}
-            </p>
+      <section className="flex h-full flex-col rounded border p-3">
+        <div className="mb-3 flex gap-2">
+          {(
+            [
+              ["sources", "Sources"],
+              ["graph", "Graph"],
+              ["trace", "Trace"],
+            ] as Array<[TabKey, string]>
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              className={`rounded border px-3 py-1 text-sm ${activeTab === key ? "bg-black text-white" : ""}`}
+              onClick={() => setActiveTab(key)}
+            >
+              {label}
+            </button>
           ))}
         </div>
 
-        <textarea
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Ask something..."
-        />
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {activeTab === "sources" && (
+            <div className="grid h-full grid-cols-1 gap-3 xl:grid-cols-2">
+              <SourcesPanel
+                ref={sourcePanelRef}
+                sources={latestResponse?.sources ?? []}
+                activeSourceId={activeSourceId}
+                onOpenEvidence={handleOpenEvidence}
+              />
+              <EntitiesPanel entities={latestResponse?.entities ?? []} />
+            </div>
+          )}
 
-        <button disabled={!canSend} onClick={sendQuery}>
-          {loading ? 'Sending...' : 'Send'}
-        </button>
+          {activeTab === "graph" && (
+            <div className="space-y-3 rounded border p-3">
+              <p className="text-sm text-gray-600">
+                Nodes: {graphData?.nodes.length ?? 0} · Edges: {graphData?.edges.length ?? 0}
+              </p>
+              <button type="button" className="rounded bg-black px-3 py-1 text-white" onClick={handleLoadGraph}>
+                Graph Preview öffnen
+              </button>
+            </div>
+          )}
 
-        {error ? <p style={{ color: 'red' }}>{error}</p> : null}
+          {activeTab === "trace" && <TracePanel trace={latestResponse?.trace} />}
+        </div>
       </section>
 
-      <RightPanel data={lastResponse} />
+      <GraphModal open={graphOpen} preview={graphData} onClose={() => setGraphOpen(false)} />
+
+      <EvidenceDrawer
+        open={evidenceOpen}
+        loading={evidenceLoading}
+        error={evidenceError}
+        items={evidenceItems ?? []}
+        onClose={() => setEvidenceOpen(false)}
+      />
     </main>
   );
 }
