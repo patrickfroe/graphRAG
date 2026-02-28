@@ -1,9 +1,13 @@
 from fastapi.testclient import TestClient
 
-from main import app
+from main import VECTOR_STORE, app
 
 
 client = TestClient(app)
+
+
+def setup_function() -> None:
+    VECTOR_STORE.clear()
 
 
 def test_ingest_and_chat_returns_sources() -> None:
@@ -56,3 +60,37 @@ def test_ingest_accepts_object_documents() -> None:
 
     assert ingest_response.status_code == 200
     assert ingest_response.json()["ingested"] == 2
+
+
+def test_graph_preview_and_evidence_endpoints() -> None:
+    ingest_response = client.post(
+        "/ingest",
+        json={"documents": ["Alpha and Beta are related", "Gamma references Delta"]},
+    )
+    assert ingest_response.status_code == 200
+
+    graph_response = client.get(
+        "/graph/preview",
+        params={"entity_keys": "Alpha,Beta,Gamma", "max_nodes": 2, "max_edges": 1},
+    )
+    assert graph_response.status_code == 200
+    assert graph_response.json() == {
+        "nodes": [
+            {"id": "Alpha", "label": "Alpha", "type": "entity"},
+            {"id": "Beta", "label": "Beta", "type": "entity"},
+        ],
+        "edges": [{"source": "Alpha", "target": "Beta", "label": "related_to"}],
+    }
+
+    evidence_response = client.get("/evidence", params={"chunk_ids": "1"})
+    assert evidence_response.status_code == 200
+    assert evidence_response.json() == {
+        "chunks": [
+            {
+                "chunk_id": "1",
+                "doc_id": "doc-1",
+                "title": "doc-1",
+                "text": "Alpha and Beta are related",
+            }
+        ]
+    }

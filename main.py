@@ -91,6 +91,9 @@ app.add_middleware(
 # In-memory store for demo purposes
 VECTOR_STORE: List[Document] = []
 
+GRAPH_PREVIEW_DEFAULT_NODE_LIMIT = 50
+GRAPH_PREVIEW_DEFAULT_EDGE_LIMIT = 100
+
 
 def retrieval(question: str, k: int = 3) -> List[Document]:
     """Return the top-k most relevant docs using a simple token overlap score."""
@@ -116,6 +119,29 @@ def generate_answer(question: str, docs: List[Document]) -> str:
 
     context = "\n".join(f"- {doc.content}" for doc in docs)
     return f"Question: {question}\n\nBased on retrieved context:\n{context}"
+
+
+def build_graph_preview(
+    entity_keys: list[str],
+    max_nodes: int = GRAPH_PREVIEW_DEFAULT_NODE_LIMIT,
+    max_edges: int = GRAPH_PREVIEW_DEFAULT_EDGE_LIMIT,
+) -> dict[str, list[dict[str, str]]]:
+    bounded_max_nodes = max(0, max_nodes)
+    bounded_max_edges = max(0, max_edges)
+
+    capped_keys = entity_keys[:bounded_max_nodes]
+    nodes = [{"id": key, "label": key, "type": "entity"} for key in capped_keys]
+
+    edges = [
+        {
+            "source": capped_keys[index],
+            "target": capped_keys[index + 1],
+            "label": "related_to",
+        }
+        for index in range(len(capped_keys) - 1)
+    ][:bounded_max_edges]
+
+    return {"nodes": nodes, "edges": edges}
 
 
 def _parse_multipart_files(body: bytes, content_type: str) -> list[tuple[str, bytes]]:
@@ -232,3 +258,35 @@ def chat(payload: ChatRequest) -> ChatResponse:
     ]
 
     return ChatResponse(answer=answer, citations=citations, sources=sources, entities=[])
+
+
+@app.get("/graph/preview")
+def graph_preview(
+    entity_keys: str = "",
+    max_nodes: int = GRAPH_PREVIEW_DEFAULT_NODE_LIMIT,
+    max_edges: int = GRAPH_PREVIEW_DEFAULT_EDGE_LIMIT,
+) -> dict[str, list[dict[str, str]]]:
+    keys = [key.strip() for key in entity_keys.split(",") if key.strip()]
+    return build_graph_preview(keys, max_nodes=max_nodes, max_edges=max_edges)
+
+
+@app.get("/evidence")
+def evidence(chunk_ids: str = "") -> dict[str, list[dict[str, str]]]:
+    requested_chunk_ids = {chunk_id.strip() for chunk_id in chunk_ids.split(",") if chunk_id.strip()}
+
+    if requested_chunk_ids:
+        matched_documents = [document for document in VECTOR_STORE if document.id in requested_chunk_ids]
+    else:
+        matched_documents = []
+
+    return {
+        "chunks": [
+            {
+                "chunk_id": document.id,
+                "doc_id": document.source,
+                "title": document.source,
+                "text": document.content,
+            }
+            for document in matched_documents
+        ]
+    }
