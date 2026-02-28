@@ -17,7 +17,10 @@ class Document:
 
 
 class IngestRequest(BaseModel):
-    documents: List[str] = Field(default_factory=list, description="Documents to store")
+    documents: List[str | dict[str, str]] = Field(
+        default_factory=list,
+        description="Documents to store as plain strings or objects with text/content",
+    )
 
 
 class IngestResponse(BaseModel):
@@ -125,7 +128,14 @@ async def ingest(request: Request) -> IngestResponse:
     if "application/json" in content_type:
         body = await request.json()
         payload = IngestRequest.model_validate(body)
-        documents.extend(payload.documents)
+        for item in payload.documents:
+            if isinstance(item, str):
+                text = item.strip()
+            else:
+                text = (item.get("text") or item.get("content") or "").strip()
+
+            if text:
+                documents.append(text)
 
     elif "multipart/form-data" in content_type:
         uploaded_files = _parse_multipart_files(await request.body(), content_type)
