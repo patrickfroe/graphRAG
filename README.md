@@ -103,6 +103,12 @@ npm run typecheck
 npm run build
 ```
 
+## 5) OpenAI-Ressourcen (Embeddings + LLM)
+
+Eine Schritt-für-Schritt-Anleitung zum Konfigurieren von OpenAI (`OPENAI_API_KEY`, Embedding-Modell, Chat-Modell) findest du hier:
+
+- `docs/openai-ressourcen.md`
+
 ## Häufige Probleme
 
 - **`ModuleNotFoundError` in Python**: sicherstellen, dass `.venv` aktiv ist und `pip install -r requirements.txt` ausgeführt wurde.
