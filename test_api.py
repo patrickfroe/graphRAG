@@ -29,3 +29,18 @@ def test_ingest_accepts_utf8_txt_upload() -> None:
 
     assert ingest_response.status_code == 200
     assert ingest_response.json()["ingested"] == 1
+
+
+def test_ingest_accepts_object_documents() -> None:
+    ingest_response = client.post(
+        "/ingest",
+        json={
+            "documents": [
+                {"id": "upload-1", "text": "AutoSys AG baut Plattformen"},
+                {"id": "upload-2", "content": "GraphRAG unterstützt Quellenangaben"},
+            ]
+        },
+    )
+
+    assert ingest_response.status_code == 200
+    assert ingest_response.json()["ingested"] == 2
