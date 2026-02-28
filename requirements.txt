@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pymilvus
+neo4j
+openai
+pydantic
+python-dotenv
+numpy
+tiktoken
