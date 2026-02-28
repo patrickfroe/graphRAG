@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GraphRAG Chat Response",
+  "type": "object",
+  "required": ["answer", "sources", "entities", "graph"],
+  "properties": {
+    "answer": {
+      "type": "string",
+      "description": "Final natural-language answer."
+    },
+    "sources": {
+      "type": "array",
+      "description": "Evidence used to support the answer.",
+      "items": {
+        "type": "object",
+        "required": ["title", "uri"],
+        "properties": {
+          "title": { "type": "string" },
+          "uri": { "type": "string" },
+          "snippet": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "entities": {
+      "type": "array",
+      "description": "Named entities extracted from context.",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "type"],
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "type": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "graph": {
+      "type": "object",
+      "required": ["nodes", "edges"],
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/node" }
+        },
+        "edges": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/edge" }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "node": {
+      "type": "object",
+      "required": ["id", "label"],
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "edge": {
+      "type": "object",
+      "required": ["source", "target", "relation"],
+      "properties": {
+        "source": { "type": "string" },
+        "target": { "type": "string" },
+        "relation": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}
