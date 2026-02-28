@@ -25,6 +25,39 @@
         <iframe id="graph-frame" title="Graph preview"></iframe>
       </div>
     </div>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chat UI</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="chat-shell">
+      <h1>Chat</h1>
+
+      <section id="messageList" class="message-list" aria-live="polite"></section>
+
+      <form id="chatForm" class="chat-form">
+        <label for="messageInput" class="sr-only">Nachricht</label>
+        <textarea
+          id="messageInput"
+          name="message"
+          placeholder="Schreibe eine Nachricht..."
+          required
+          rows="3"
+        ></textarea>
+        <button id="sendButton" type="submit">Senden</button>
+      </form>
+    </main>
+
+    <template id="messageTemplate">
+      <article class="message">
+        <header class="message-role"></header>
+        <p class="message-content"></p>
+        <ul class="message-sources"></ul>
+      </article>
+    </template>
 
     <script src="app.js"></script>
   </body>
