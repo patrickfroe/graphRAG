@@ -1,6 +1,9 @@
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
-from main import VECTOR_STORE, app
+import main
+from main import CHUNK_STORE, DOCUMENT_METADATA, DOCUMENT_STORE, VECTOR_STORE, app
 
 
 client = TestClient(app)
@@ -8,6 +11,9 @@ client = TestClient(app)
 
 def setup_function() -> None:
     VECTOR_STORE.clear()
+    DOCUMENT_STORE.clear()
+    CHUNK_STORE.clear()
+    DOCUMENT_METADATA.clear()
 
 
 def test_ingest_and_chat_returns_sources() -> None:
@@ -96,3 +102,42 @@ def test_graph_preview_and_evidence_endpoints() -> None:
             }
         ]
     }
+
+
+def test_document_management_lifecycle(tmp_path: Path) -> None:
+    main.UPLOAD_DIR = tmp_path
+
+    upload_response = client.post(
+        "/documents/upload",
+        files={"file": ("report.txt", "Erster Absatz\n\nZweiter Absatz", "text/plain")},
+    )
+    assert upload_response.status_code == 200
+    document = upload_response.json()
+    doc_id = document["doc_id"]
+    assert document["title"] == "report"
+    assert document["file_name"] == "report.txt"
+    assert document["chunk_count"] == 2
+
+    list_response = client.get("/documents")
+    assert list_response.status_code == 200
+    listed_documents = list_response.json()
+    assert len(listed_documents) == 1
+    assert listed_documents[0]["doc_id"] == doc_id
+
+    get_response = client.get(f"/documents/{doc_id}")
+    assert get_response.status_code == 200
+    assert get_response.json()["chunk_count"] == 2
+
+    update_response = client.put(
+        f"/documents/{doc_id}",
+        json={"title": "Neuer Titel", "metadata": {"owner": "backend"}},
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["title"] == "Neuer Titel"
+
+    delete_response = client.delete(f"/documents/{doc_id}")
+    assert delete_response.status_code == 200
+    assert delete_response.json() == {"status": "deleted", "doc_id": doc_id}
+
+    not_found_response = client.get(f"/documents/{doc_id}")
+    assert not_found_response.status_code == 404
