@@ -17,11 +17,20 @@ export type EvidenceResponse = {
   }>;
 };
 
+export type DocumentItem = {
+  id: string;
+  title: string;
+  file_name: string;
+  uploaded_at: string;
+  chunk_count: number;
+};
+
 async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+  const hasFormDataBody = init?.body instanceof FormData;
   const response = await fetch(input, {
     ...init,
     headers: {
-      "Content-Type": "application/json",
+      ...(hasFormDataBody ? {} : { "Content-Type": "application/json" }),
       ...(init?.headers ?? {}),
     },
     cache: "no-store",
@@ -90,6 +99,31 @@ export async function ingestDocuments(documents: string[]): Promise<{ ingested: 
   }
 }
 
+export async function listDocuments(): Promise<DocumentItem[]> {
+  return requestJson<DocumentItem[]>(`${API_BASE}/documents`, { method: "GET" });
+}
+
+export async function uploadDocument(file: File): Promise<{ id?: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  return requestJson<{ id?: string }>(`${API_BASE}/documents/upload`, {
+    method: "POST",
+    body: formData,
+  });
+}
+
+export async function deleteDocument(documentId: string): Promise<{ deleted: boolean }> {
+  return requestJson<{ deleted: boolean }>(`${API_BASE}/documents/${documentId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function reindexDocument(documentId: string): Promise<{ reindexed: boolean }> {
+  return requestJson<{ reindexed: boolean }>(`${API_BASE}/documents/${documentId}/reindex`, {
+    method: "POST",
+  });
+}
 
 export async function runQuery(payload: { query: string }): Promise<QueryResponse> {
   const response = await chat({ query: payload.query });

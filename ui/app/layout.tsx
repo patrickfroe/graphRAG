@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import QueryProvider from "../components/QueryProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -11,7 +12,8 @@ export const metadata: Metadata = {
 const navItems = [
   { href: "/chat", label: "Chat" },
   { href: "/ingest", label: "Ingest" },
-  { href: "/graph", label: "Graph" }
+  { href: "/graph", label: "Graph" },
+  { href: "/documents", label: "Documents" }
 ];
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -29,7 +31,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               ))}
             </nav>
           </header>
-          <main>{children}</main>
+          <main>
+            <QueryProvider>{children}</QueryProvider>
+          </main>
         </div>
       </body>
     </html>
