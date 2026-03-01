@@ -10,7 +10,7 @@ class DummyEmbedder:
 class DummySearcher:
     def search(self, vector, top_k: int):
         assert vector == [0.1, 0.2]
-        assert top_k == 2
+        assert top_k == 20
         return [
             {
                 "chunk_id": "c1",
@@ -49,8 +49,22 @@ def test_retrieve_builds_context_and_sources():
     result = retriever.retrieve("what is graph rag?", top_k=2, max_graph_facts=3)
 
     assert "### Retrieved Chunks" in result.context
-    assert "[chunk:c1 score=0.9500]" in result.context
+    assert "[chunk:c1 final=" in result.context
     assert "### Graph Facts" in result.context
     assert "(GraphRAG) -[USES]-> (Neo4j)" in result.context
     assert len(result.sources["chunks"]) == 2
     assert result.sources["graph_facts"][0]["entity"] == "GraphRAG"
+
+    top_chunk = result.sources["chunks"][0]
+    assert "final_score" in top_chunk
+    assert "bm25_score" in top_chunk
+    assert "graph_score" in top_chunk
+
+
+def test_hybrid_fusion_prefers_chunk_with_better_total_score():
+    retriever = GraphRAGRetriever(DummyEmbedder(), DummySearcher(), DummyExpander())
+
+    result = retriever.retrieve("what is graph rag?", top_k=1, max_graph_facts=3)
+
+    assert len(result.sources["chunks"]) == 1
+    assert result.sources["chunks"][0]["chunk_id"] == "c1"
