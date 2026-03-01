@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+import main
 from main import VECTOR_STORE, app
 
 
@@ -96,3 +97,86 @@ def test_graph_preview_and_evidence_endpoints() -> None:
             }
         ]
     }
+
+
+
+def test_graph_document_returns_limited_graph_preview(monkeypatch) -> None:
+    monkeypatch.setattr(main, "NEO4J_URI", "bolt://localhost:7687")
+    monkeypatch.setattr(main, "NEO4J_USER", "neo4j")
+    monkeypatch.setattr(main, "NEO4J_PASSWORD", "secret")
+
+    class FakeNode:
+        def __init__(self, node_id: int, name: str, label: str = "Entity") -> None:
+            self.id = node_id
+            self.labels = {label}
+            self._props = {"name": name}
+
+        def get(self, key: str):
+            return self._props.get(key)
+
+    class FakeRecord(dict):
+        pass
+
+    record = FakeRecord(
+        entities=[FakeNode(1, "Entity 1"), FakeNode(2, "Entity 2")],
+        neighbors=[FakeNode(3, "Neighbor 3"), FakeNode(4, "Neighbor 4")],
+        raw_edges=[
+            {"source": "1", "target": "2", "label": "REL_12"},
+            {"source": "2", "target": "3", "label": "REL_23"},
+            {"source": "3", "target": "999", "label": "REL_INVALID"},
+        ],
+    )
+
+    class FakeResult:
+        def single(self):
+            return record
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def run(self, _query: str, **_kwargs):
+            return FakeResult()
+
+    class FakeDriver:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def session(self):
+            return FakeSession()
+
+    monkeypatch.setattr(main.GraphDatabase, "driver", lambda *_args, **_kwargs: FakeDriver())
+    monkeypatch.setattr(main, "GRAPH_DOCUMENT_MAX_NODES", 3)
+    monkeypatch.setattr(main, "GRAPH_DOCUMENT_MAX_EDGES", 2)
+
+    response = client.get("/graph/document/doc-1")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "nodes": [
+            {"id": "1", "label": "Entity 1", "type": "entity"},
+            {"id": "2", "label": "Entity 2", "type": "entity"},
+            {"id": "3", "label": "Neighbor 3", "type": "entity"},
+        ],
+        "edges": [
+            {"source": "1", "target": "2", "label": "REL_12"},
+            {"source": "2", "target": "3", "label": "REL_23"},
+        ],
+    }
+
+
+def test_graph_document_requires_neo4j_configuration(monkeypatch) -> None:
+    monkeypatch.setattr(main, "NEO4J_URI", None)
+    monkeypatch.setattr(main, "NEO4J_USER", None)
+    monkeypatch.setattr(main, "NEO4J_PASSWORD", None)
+
+    response = client.get("/graph/document/doc-1")
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Neo4j configuration is missing"}

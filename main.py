@@ -6,7 +6,10 @@ from typing import List
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from neo4j import GraphDatabase
 from pydantic import BaseModel, Field, model_validator
+
+from config import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
 
 
 @dataclass
@@ -116,6 +119,8 @@ VECTOR_STORE: List[Document] = []
 
 GRAPH_PREVIEW_DEFAULT_NODE_LIMIT = 50
 GRAPH_PREVIEW_DEFAULT_EDGE_LIMIT = 100
+GRAPH_DOCUMENT_MAX_NODES = 200
+GRAPH_DOCUMENT_MAX_EDGES = 400
 
 
 def retrieval(question: str, k: int = 3) -> List[Document]:
@@ -165,6 +170,76 @@ def build_graph_preview(
     ][:bounded_max_edges]
 
     return {"nodes": nodes, "edges": edges}
+
+
+def fetch_document_graph_preview(
+    doc_id: str,
+    max_nodes: int = GRAPH_DOCUMENT_MAX_NODES,
+    max_edges: int = GRAPH_DOCUMENT_MAX_EDGES,
+) -> GraphPreviewItem:
+    if not NEO4J_URI or not NEO4J_USER or not NEO4J_PASSWORD:
+        raise HTTPException(status_code=500, detail="Neo4j configuration is missing")
+
+    query = """
+    MATCH (d:Document {doc_id:$doc_id})-[:HAS_CHUNK]->(c)-[:MENTIONS]->(e)
+    OPTIONAL MATCH (e)-[r]->(e2)
+    RETURN
+      collect(DISTINCT e) AS entities,
+      collect(DISTINCT e2) AS neighbors,
+      collect(DISTINCT {
+        source: toString(id(e)),
+        target: toString(id(e2)),
+        label: type(r)
+      }) AS raw_edges
+    """
+
+    with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD)) as driver:
+        with driver.session() as session:
+            record = session.run(query, doc_id=doc_id).single()
+
+    if record is None:
+        return GraphPreviewItem()
+
+    entities = record["entities"] or []
+    neighbors = record["neighbors"] or []
+    raw_edges = record["raw_edges"] or []
+
+    nodes: list[GraphNodeItem] = []
+    node_ids: set[str] = set()
+    for node in [*entities, *neighbors]:
+        if node is None:
+            continue
+        node_id = str(node.id)
+        if node_id in node_ids:
+            continue
+        node_ids.add(node_id)
+
+        labels = list(node.labels)
+        node_type = labels[0].lower() if labels else "entity"
+        nodes.append(
+            GraphNodeItem(
+                id=node_id,
+                label=node.get("name") or node.get("label") or node.get("doc_id") or node_id,
+                type=node_type,
+            )
+        )
+        if len(nodes) >= max_nodes:
+            break
+
+    allowed_node_ids = {node.id for node in nodes}
+    edges: list[GraphEdgeItem] = []
+    for edge in raw_edges:
+        source = edge.get("source")
+        target = edge.get("target")
+        if not source or not target:
+            continue
+        if source not in allowed_node_ids or target not in allowed_node_ids:
+            continue
+        edges.append(GraphEdgeItem(source=source, target=target, label=edge.get("label") or "related_to"))
+        if len(edges) >= max_edges:
+            break
+
+    return GraphPreviewItem(nodes=nodes, edges=edges)
 
 
 def _parse_multipart_files(body: bytes, content_type: str) -> list[tuple[str, bytes]]:
@@ -303,6 +378,15 @@ def graph_preview(
 ) -> dict[str, list[dict[str, str]]]:
     keys = [key.strip() for key in entity_keys.split(",") if key.strip()]
     return build_graph_preview(keys, max_nodes=max_nodes, max_edges=max_edges)
+
+
+@app.get("/graph/document/{doc_id}", response_model=GraphPreviewItem)
+def graph_document(doc_id: str) -> GraphPreviewItem:
+    return fetch_document_graph_preview(
+        doc_id=doc_id,
+        max_nodes=GRAPH_DOCUMENT_MAX_NODES,
+        max_edges=GRAPH_DOCUMENT_MAX_EDGES,
+    )
 
 
 @app.get("/evidence")
