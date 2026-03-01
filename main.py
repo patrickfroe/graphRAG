@@ -1,15 +1,28 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from neo4j import GraphDatabase
 from pydantic import BaseModel, Field, model_validator
 
-from config import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
+from config import MILVUS_URI, NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
+
+try:
+    from neo4j import GraphDatabase
+except Exception:  # pragma: no cover - optional in tests
+    GraphDatabase = None
+
+try:
+    from pymilvus import MilvusClient
+except Exception:  # pragma: no cover - optional in tests
+    MilvusClient = None
 
 
 @dataclass
@@ -28,6 +41,19 @@ class IngestRequest(BaseModel):
 
 class IngestResponse(BaseModel):
     ingested: int
+
+
+class DocumentResponse(BaseModel):
+    doc_id: str
+    title: str
+    file_name: str
+    uploaded_at: datetime
+    chunk_count: int
+
+
+class DocumentUpdateRequest(BaseModel):
+    title: str | None = None
+    metadata: dict[str, str] = Field(default_factory=dict)
 
 
 class ChatRequest(BaseModel):
@@ -116,11 +142,84 @@ app.add_middleware(
 
 # In-memory store for demo purposes
 VECTOR_STORE: List[Document] = []
+DOCUMENT_STORE: dict[str, DocumentResponse] = {}
+CHUNK_STORE: dict[str, dict[str, str]] = {}
+UPLOAD_DIR = Path("/data/uploads")
+DOCUMENT_METADATA: dict[str, dict[str, str]] = {}
 
 GRAPH_PREVIEW_DEFAULT_NODE_LIMIT = 50
 GRAPH_PREVIEW_DEFAULT_EDGE_LIMIT = 100
 GRAPH_DOCUMENT_MAX_NODES = 200
 GRAPH_DOCUMENT_MAX_EDGES = 400
+
+
+def _chunk_text(text: str) -> list[str]:
+    chunks = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
+    return chunks or [text.strip()]
+
+
+def _persist_document_neo4j(document: DocumentResponse, chunks: list[tuple[str, str]]) -> None:
+    if not (GraphDatabase and NEO4J_URI and NEO4J_USER and NEO4J_PASSWORD):
+        return
+
+    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    with driver.session() as session:
+        session.run(
+            """
+            MERGE (d:Document {doc_id: $doc_id})
+            SET d.title = $title,
+                d.file_name = $file_name,
+                d.uploaded_at = datetime($uploaded_at),
+                d.chunk_count = $chunk_count
+            """,
+            doc_id=document.doc_id,
+            title=document.title,
+            file_name=document.file_name,
+            uploaded_at=document.uploaded_at.isoformat(),
+            chunk_count=document.chunk_count,
+        )
+
+        for chunk_id, chunk_text in chunks:
+            session.run(
+                """
+                MATCH (d:Document {doc_id: $doc_id})
+                MERGE (c:Chunk {chunk_id: $chunk_id})
+                SET c.doc_id = $doc_id, c.text = $text
+                MERGE (d)-[:HAS_CHUNK]->(c)
+                """,
+                doc_id=document.doc_id,
+                chunk_id=chunk_id,
+                text=chunk_text,
+            )
+    driver.close()
+
+
+def _delete_document_neo4j(doc_id: str) -> None:
+    if not (GraphDatabase and NEO4J_URI and NEO4J_USER and NEO4J_PASSWORD):
+        return
+
+    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    with driver.session() as session:
+        session.run(
+            """
+            MATCH (d:Document {doc_id: $doc_id})-[:HAS_CHUNK]->(c:Chunk)
+            DETACH DELETE c
+            """,
+            doc_id=doc_id,
+        )
+        session.run("MATCH (d:Document {doc_id: $doc_id}) DETACH DELETE d", doc_id=doc_id)
+    driver.close()
+
+
+def _delete_embeddings_milvus(doc_id: str) -> None:
+    if not (MilvusClient and MILVUS_URI):
+        return
+
+    client = MilvusClient(uri=MILVUS_URI)
+    try:
+        client.delete(collection_name="chunks", filter=f'doc_id == "{doc_id}"')
+    except Exception:
+        return
 
 
 def retrieval(question: str, k: int = 3) -> List[Document]:
@@ -330,6 +429,105 @@ async def ingest(request: Request) -> IngestResponse:
         VECTOR_STORE.append(Document(id=str(i), content=content, source=f"doc-{i}"))
 
     return IngestResponse(ingested=len(documents))
+
+
+@app.get("/documents", response_model=list[DocumentResponse])
+def list_documents() -> list[DocumentResponse]:
+    return sorted(DOCUMENT_STORE.values(), key=lambda item: item.uploaded_at, reverse=True)
+
+
+@app.get("/documents/{doc_id}", response_model=DocumentResponse)
+def get_document(doc_id: str) -> DocumentResponse:
+    document = DOCUMENT_STORE.get(doc_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return document
+
+
+@app.post("/documents/upload", response_model=DocumentResponse)
+async def upload_document(request: Request) -> DocumentResponse:
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" not in content_type:
+        raise HTTPException(status_code=415, detail="Unsupported content type")
+
+    files = _parse_multipart_files(await request.body(), content_type)
+    if not files:
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    file_name, raw_content = files[0]
+    try:
+        text = raw_content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="File must be UTF-8 encoded text") from exc
+
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="File is empty")
+
+    doc_id = str(uuid4())
+    upload_time = datetime.now(tz=timezone.utc)
+    chunks = _chunk_text(text)
+
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    safe_file_name = Path(file_name).name
+    file_path = UPLOAD_DIR / f"{doc_id}_{safe_file_name}"
+    file_path.write_bytes(raw_content)
+
+    document = DocumentResponse(
+        doc_id=doc_id,
+        title=Path(safe_file_name).stem,
+        file_name=safe_file_name,
+        uploaded_at=upload_time,
+        chunk_count=len(chunks),
+    )
+    DOCUMENT_STORE[doc_id] = document
+    DOCUMENT_METADATA[doc_id] = {}
+
+    chunk_pairs: list[tuple[str, str]] = []
+    for chunk_text in chunks:
+        chunk_id = str(uuid4())
+        chunk_pairs.append((chunk_id, chunk_text))
+        CHUNK_STORE[chunk_id] = {"doc_id": doc_id, "text": chunk_text}
+        VECTOR_STORE.append(Document(id=chunk_id, content=chunk_text, source=doc_id))
+
+    _persist_document_neo4j(document, chunk_pairs)
+
+    return document
+
+
+@app.put("/documents/{doc_id}", response_model=DocumentResponse)
+def update_document(doc_id: str, payload: DocumentUpdateRequest) -> DocumentResponse:
+    document = DOCUMENT_STORE.get(doc_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    new_title = payload.title.strip() if payload.title else document.title
+    updated_document = document.model_copy(update={"title": new_title})
+    DOCUMENT_STORE[doc_id] = updated_document
+    DOCUMENT_METADATA[doc_id] = payload.metadata
+    return updated_document
+
+
+@app.delete("/documents/{doc_id}")
+def delete_document(doc_id: str) -> dict[str, str]:
+    document = DOCUMENT_STORE.pop(doc_id, None)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    chunk_ids = [chunk_id for chunk_id, chunk in CHUNK_STORE.items() if chunk["doc_id"] == doc_id]
+    for chunk_id in chunk_ids:
+        CHUNK_STORE.pop(chunk_id, None)
+
+    VECTOR_STORE[:] = [item for item in VECTOR_STORE if item.source != doc_id]
+    DOCUMENT_METADATA.pop(doc_id, None)
+
+    _delete_document_neo4j(doc_id)
+    _delete_embeddings_milvus(doc_id)
+
+    for candidate in UPLOAD_DIR.glob(f"{doc_id}_*"):
+        if candidate.is_file():
+            candidate.unlink()
+
+    return {"status": "deleted", "doc_id": doc_id}
 
 
 @app.post("/chat", response_model=ChatResponse)
