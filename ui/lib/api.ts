@@ -17,6 +17,25 @@ export type EvidenceResponse = {
   }>;
 };
 
+export type DocumentGraphNode = {
+  id: string;
+  label: string;
+  type: string;
+  [key: string]: unknown;
+};
+
+export type DocumentGraphEdge = {
+  source: string;
+  target: string;
+  label?: string;
+  [key: string]: unknown;
+};
+
+export type DocumentGraphResponse = {
+  nodes: DocumentGraphNode[];
+  edges: DocumentGraphEdge[];
+};
+
 async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
     ...init,
@@ -60,6 +79,12 @@ export async function evidence(chunkIds: string[]): Promise<EvidenceResponse> {
   }
 
   return requestJson<EvidenceResponse>(`${API_BASE}/evidence?${params.toString()}`, {
+    method: "GET",
+  });
+}
+
+export async function graphDocument(docId: string): Promise<DocumentGraphResponse> {
+  return requestJson<DocumentGraphResponse>(`${API_BASE}/graph/document/${encodeURIComponent(docId)}`, {
     method: "GET",
   });
 }
