@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import json
 import asyncio
+import logging
 import unicodedata
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
@@ -216,6 +217,49 @@ _PERSON_BLOCKED_SUFFIXES = {
     "hauptsitz",
     "jahr",
 }
+_ENTITY_PREFIX_BLACKLIST = {
+    "automobilzulieferer",
+    "softwareanbieter",
+    "unternehmen",
+    "firma",
+    "hersteller",
+    "anbieter",
+    "startup",
+    "konzern",
+}
+_GENERIC_COMPANY_TERMS = {
+    "solutions",
+    "systems",
+    "technology",
+    "group",
+    "services",
+    "international",
+    "global",
+}
+_COMPANY_SUFFIXES = {
+    "ag",
+    "gmbh",
+    "inc",
+    "ltd",
+    "corp",
+    "corporation",
+    "group",
+    "holding",
+    "solutions",
+    "systems",
+}
+_REMOVABLE_COMPANY_SUFFIXES = {
+    "group",
+    "holding",
+    "solutions",
+    "systems",
+    "technology",
+    "services",
+    "international",
+    "global",
+}
+_COUNTRY_SUFFIX_MAP = {"AT": "AG", "DE": "GmbH", "US": "Inc"}
+_COMPANY_INDICATOR_SUFFIXES = {"ag", "gmbh", "inc", "ltd", "corp", "corporation"}
 _CANDIDATE_ALIASES = {
     "person": "person",
     "people": "person",
@@ -373,6 +417,84 @@ def _normalize_entity_name(name: str) -> str:
     normalized = normalized.encode("ascii", "ignore").decode("ascii")
     normalized = re.sub(r"[^\w\s]", "", normalized.lower())
     return " ".join(normalized.split())
+
+
+def clean_entity_name(entity_text: str) -> str:
+    tokens = [token for token in re.split(r"\s+", entity_text.strip()) if token]
+    while tokens and tokens[0].lower().strip(".,") in _ENTITY_PREFIX_BLACKLIST:
+        tokens.pop(0)
+    return " ".join(tokens)
+
+
+def normalize_company_name(name: str) -> str:
+    tokens = [token.strip(".,") for token in name.split() if token.strip(".,")]
+    if not tokens:
+        return ""
+
+    mapped_country_suffix = None
+    if tokens[-1].upper() in _COUNTRY_SUFFIX_MAP:
+        mapped_country_suffix = _COUNTRY_SUFFIX_MAP[tokens[-1].upper()]
+        tokens[-1] = mapped_country_suffix
+
+    while len(tokens) > 1 and tokens[-1].lower() in _REMOVABLE_COMPANY_SUFFIXES:
+        tokens.pop()
+
+    if not tokens:
+        return ""
+
+    original_suffix = name.split()[-1].strip(".,") if name.split() else ""
+    mapped_suffix = _COUNTRY_SUFFIX_MAP.get(original_suffix.upper())
+    if mapped_suffix and mapped_country_suffix is None:
+        tokens.append(mapped_suffix)
+
+    return " ".join(tokens)
+
+
+def canonical_company_name(name: str) -> str:
+    cleaned = re.sub(r"[^\w\s]", " ", name.lower())
+    tokens = [token for token in cleaned.split() if token]
+    tokens = [token for token in tokens if token not in _COMPANY_SUFFIXES]
+    return " ".join(tokens)
+
+
+def filter_false_entities(entity: dict[str, Any]) -> bool:
+    name = str(entity.get("name", "")).strip()
+    original_name = str(entity.get("original_name", name)).strip()
+    entity_type = _canonical_entity_type(str(entity.get("type", "")).strip())
+    if not name:
+        return False
+
+    tokens = name.split()
+    if entity_type == "person":
+        return len(tokens) >= 2 and _looks_like_person(name)
+
+    if len(tokens) == 1 and not re.search(r"[A-ZÄÖÜ][a-zäöüß]+|[A-Z]{2,}", name):
+        return False
+
+    lowered_tokens = [token.lower().strip(".,") for token in tokens]
+    original_tokens = [token.lower().strip(".,") for token in original_name.split() if token.strip(".,")]
+    has_generic_only = any(token in _GENERIC_COMPANY_TERMS for token in original_tokens)
+    has_indicator = any(token in _COMPANY_INDICATOR_SUFFIXES for token in lowered_tokens)
+    if has_generic_only and not has_indicator:
+        return False
+
+    return True
+
+
+def _capitalization_score(name: str) -> float:
+    tokens = [token for token in re.split(r"\s+", name.strip()) if token]
+    if not tokens:
+        return 0.0
+    capped = min(1.0, sum(1 for t in tokens if t[:1].isupper()) / len(tokens))
+    return round(capped, 4)
+
+
+def _entity_confidence_score(entity: dict[str, Any]) -> float:
+    ner_confidence = max(0.0, min(1.0, float(entity.get("confidence", 0.0) or 0.0)))
+    frequency = float(entity.get("frequency", 1.0) or 1.0)
+    frequency_score = min(1.0, frequency / 3.0)
+    capitalization = _capitalization_score(str(entity.get("name", "")))
+    return round((0.5 * ner_confidence) + (0.3 * frequency_score) + (0.2 * capitalization), 4)
 
 
 def _canonical_entity_type(entity_type: str) -> str:
@@ -542,15 +664,55 @@ def link_entity(entity_name: str, entity_type: str = "") -> dict[str, str | None
 def _rank_entities(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ranked: list[dict[str, Any]] = []
     for entity in entities:
-        frequency = float(entity.get("frequency", 1))
-        confidence = float(entity.get("confidence", 0.0))
-        score = min(1.0, (frequency * 0.6) + (confidence * 0.4))
-        if score < 0.3:
+        score = _entity_confidence_score(entity)
+        if score < 0.4:
             continue
         enriched = dict(entity)
-        enriched["score"] = round(score, 4)
+        enriched["score"] = score
         ranked.append(enriched)
     return ranked
+
+
+def _post_process_entities(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    processed: list[dict[str, Any]] = []
+    for entity in entities:
+        entity_type = _canonical_entity_type(str(entity.get("type", "")))
+        original_name = str(entity.get("name", "")).strip()
+        cleaned_name = clean_entity_name(original_name)
+        normalized_name = normalize_company_name(cleaned_name) if entity_type in {"company", "organization"} else cleaned_name
+        canonical_name = canonical_company_name(normalized_name) if entity_type in {"company", "organization"} else _normalize_entity_name(normalized_name)
+
+        logging.info(
+            "entity_post_processing original=%s cleaned=%s normalized=%s canonical=%s",
+            original_name,
+            cleaned_name,
+            normalized_name,
+            canonical_name,
+        )
+
+        candidate = dict(entity)
+        candidate["original_name"] = original_name
+        candidate["name"] = normalized_name
+        candidate["canonical_name"] = canonical_name
+        candidate["normalized_name"] = _normalize_entity_name(normalized_name)
+        candidate["key"] = f"{entity_type}:{candidate['normalized_name']}"
+        candidate["type"] = entity_type
+
+        if not filter_false_entities(candidate):
+            continue
+        processed.append(candidate)
+
+    deduped: dict[tuple[str, str], dict[str, Any]] = {}
+    for entity in processed:
+        dedupe_key = (entity["type"], str(entity.get("canonical_name", "")))
+        existing = deduped.get(dedupe_key)
+        if existing is None:
+            deduped[dedupe_key] = dict(entity)
+            continue
+        existing["frequency"] = int(existing.get("frequency", 1)) + int(entity.get("frequency", 1))
+        existing["confidence"] = max(float(existing.get("confidence", 0.0)), float(entity.get("confidence", 0.0)))
+
+    return list(deduped.values())
 
 
 def _extract_entities(text: str, candidates: list[str] | None = None) -> list[dict[str, Any]]:
@@ -559,7 +721,8 @@ def _extract_entities(text: str, candidates: list[str] | None = None) -> list[di
     llm_entities = _extract_entities_with_llm(text, requested)
     regex_entities = _extract_entities_regex(text, requested)
     merged = merge_entities(gliner_entities, llm_entities, regex_entities, threshold=0.9)
-    ranked = _rank_entities(merged)
+    post_processed = _post_process_entities(merged)
+    ranked = _rank_entities(post_processed)
 
     output: list[dict[str, Any]] = []
     for entity in ranked:
@@ -570,7 +733,7 @@ def _extract_entities(text: str, candidates: list[str] | None = None) -> list[di
                 "name": entity["name"],
                 "type": entity["type"],
                 "canonical_name": linked["canonical_name"],
-                "confidence": entity.get("confidence", 0.0),
+                "confidence": entity.get("score", entity.get("confidence", 0.0)),
                 "score": entity.get("score", 0.0),
                 "wikidata_id": linked["wikidata_id"],
             }
@@ -700,8 +863,10 @@ def _persist_document_neo4j(document: DocumentResponse, chunks: list[tuple[str, 
                 session.run(
                     """
                     MATCH (c:Chunk {chunk_id: $chunk_id})
-                    MERGE (e:Entity {name: $name, type: $type})
-                    SET e.canonical_name = $canonical_name,
+                    MERGE (e:Entity {canonical_name: $canonical_name})
+                    SET e.name = $name,
+                        e.type = $type,
+                        e.confidence = $confidence,
                         e.score = $score,
                         e.wikidata_id = $wikidata_id
                     MERGE (c)-[:MENTIONS]->(e)
@@ -710,6 +875,7 @@ def _persist_document_neo4j(document: DocumentResponse, chunks: list[tuple[str, 
                     name=entity.get("name", ""),
                     type=entity.get("type", "unknown"),
                     canonical_name=entity.get("canonical_name", entity.get("name", "")),
+                    confidence=float(entity.get("confidence", 0.0) or 0.0),
                     score=float(entity.get("score", 0.0) or 0.0),
                     wikidata_id=entity.get("wikidata_id"),
                 )
