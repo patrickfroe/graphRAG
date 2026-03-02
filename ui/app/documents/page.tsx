@@ -164,7 +164,12 @@ export default function DocumentsPage() {
   };
 
   const handleViewGraph = (documentId: string) => {
-    window.localStorage.setItem("graph-seed-keys", JSON.stringify([documentId]));
+    router.push(`/graph/${encodeURIComponent(documentId)}`);
+  };
+
+  const handleViewFullGraph = () => {
+    window.localStorage.setItem("graph-seed-keys", JSON.stringify([]));
+    window.localStorage.removeItem("graph-preview");
     router.push("/graph");
   };
 
@@ -180,7 +185,7 @@ export default function DocumentsPage() {
           <button
             type="button"
             className="rounded border px-3 py-2 text-sm"
-            onClick={() => router.push("/graph/all")}
+            onClick={handleViewFullGraph}
             disabled={isMutating}
           >
             Gesamten Graph ansehen
