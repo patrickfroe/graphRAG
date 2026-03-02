@@ -530,6 +530,47 @@ def delete_document(doc_id: str) -> dict[str, str]:
     return {"status": "deleted", "doc_id": doc_id}
 
 
+@app.post("/documents/{doc_id}/reindex")
+def reindex_document(doc_id: str) -> dict[str, object]:
+    document = DOCUMENT_STORE.get(doc_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    upload_file = next((candidate for candidate in UPLOAD_DIR.glob(f"{doc_id}_*") if candidate.is_file()), None)
+    if upload_file is None:
+        raise HTTPException(status_code=404, detail="Uploaded file for document not found")
+
+    raw_content = upload_file.read_bytes()
+    try:
+        text = raw_content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="File must be UTF-8 encoded text") from exc
+
+    chunks = _chunk_text(text)
+
+    old_chunk_ids = [chunk_id for chunk_id, chunk in CHUNK_STORE.items() if chunk["doc_id"] == doc_id]
+    for chunk_id in old_chunk_ids:
+        CHUNK_STORE.pop(chunk_id, None)
+
+    VECTOR_STORE[:] = [item for item in VECTOR_STORE if item.source != doc_id]
+
+    chunk_pairs: list[tuple[str, str]] = []
+    for chunk_text in chunks:
+        chunk_id = str(uuid4())
+        chunk_pairs.append((chunk_id, chunk_text))
+        CHUNK_STORE[chunk_id] = {"doc_id": doc_id, "text": chunk_text}
+        VECTOR_STORE.append(Document(id=chunk_id, content=chunk_text, source=doc_id))
+
+    updated_document = document.model_copy(update={"chunk_count": len(chunks)})
+    DOCUMENT_STORE[doc_id] = updated_document
+
+    _delete_document_neo4j(doc_id)
+    _persist_document_neo4j(updated_document, chunk_pairs)
+    _delete_embeddings_milvus(doc_id)
+
+    return {"reindexed": True, "doc_id": doc_id, "chunk_count": len(chunks)}
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest) -> ChatResponse:
     question = payload.query or payload.question or ""
