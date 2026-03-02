@@ -3,11 +3,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, RefreshCw, Trash2, Upload } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { ChangeEvent, useMemo, useRef, useState } from "react";
+import { ChangeEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { deleteDocument, listDocuments, reindexDocument, uploadDocument } from "../../lib/api";
 
 const queryKey = ["documents"];
+const ENTITY_TYPES_STORAGE_KEY = "documents-entity-types";
+const DEFAULT_ENTITY_TYPES = ["ORG", "PERSON", "PRODUCT", "TECH", "LOCATION"];
 
 function formatDate(value: string): string {
   const date = new Date(value);
@@ -23,6 +25,28 @@ export default function DocumentsPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [entityTypeInput, setEntityTypeInput] = useState("");
+  const [entityTypes, setEntityTypes] = useState<string[]>(DEFAULT_ENTITY_TYPES);
+
+  useEffect(() => {
+    const storedValue = window.localStorage.getItem(ENTITY_TYPES_STORAGE_KEY);
+    if (!storedValue) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(storedValue);
+      if (Array.isArray(parsed) && parsed.every((value) => typeof value === "string")) {
+        setEntityTypes(parsed.map((value) => value.trim()).filter(Boolean));
+      }
+    } catch {
+      // Ignore invalid local storage value and keep defaults.
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(ENTITY_TYPES_STORAGE_KEY, JSON.stringify(entityTypes));
+  }, [entityTypes]);
 
   const { data: documents = [], isLoading, isError, error } = useQuery({
     queryKey,
@@ -30,7 +54,8 @@ export default function DocumentsPage() {
   });
 
   const uploadMutation = useMutation({
-    mutationFn: uploadDocument,
+    mutationFn: ({ file, configuredEntityTypes }: { file: File; configuredEntityTypes: string[] }) =>
+      uploadDocument(file, { entityTypes: configuredEntityTypes }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey });
       setActionError(null);
@@ -55,7 +80,8 @@ export default function DocumentsPage() {
   });
 
   const reindexMutation = useMutation({
-    mutationFn: reindexDocument,
+    mutationFn: ({ documentId, configuredEntityTypes }: { documentId: string; configuredEntityTypes: string[] }) =>
+      reindexDocument(documentId, { entityTypes: configuredEntityTypes }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey });
       setActionError(null);
@@ -79,7 +105,29 @@ export default function DocumentsPage() {
       return;
     }
 
-    uploadMutation.mutate(file);
+    uploadMutation.mutate({ file, configuredEntityTypes: entityTypes });
+  };
+
+  const addEntityType = () => {
+    const normalizedEntityType = entityTypeInput.trim().toUpperCase();
+    if (!normalizedEntityType || entityTypes.includes(normalizedEntityType)) {
+      setEntityTypeInput("");
+      return;
+    }
+
+    setEntityTypes((current) => [...current, normalizedEntityType]);
+    setEntityTypeInput("");
+  };
+
+  const handleEntityTypeInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      addEntityType();
+    }
+  };
+
+  const removeEntityType = (entityTypeToRemove: string) => {
+    setEntityTypes((current) => current.filter((entityType) => entityType !== entityTypeToRemove));
   };
 
   const handleViewGraph = (documentId: string) => {
@@ -124,6 +172,46 @@ export default function DocumentsPage() {
           {actionError ?? (error instanceof Error ? error.message : "Failed to load documents")}
         </p>
       )}
+
+      <div className="space-y-3 rounded border p-4">
+        <div>
+          <h3 className="text-sm font-semibold">Entity extraction</h3>
+          <p className="text-sm text-muted-foreground">Configure once which entity types should be extracted for uploads and reindexing.</p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {entityTypes.length === 0 && <span className="text-sm text-muted-foreground">No entity types configured.</span>}
+          {entityTypes.map((entityType) => (
+            <span key={entityType} className="inline-flex items-center gap-2 rounded-full border px-2 py-1 text-xs">
+              {entityType}
+              <button
+                type="button"
+                className="font-semibold text-muted-foreground hover:text-foreground"
+                onClick={() => removeEntityType(entityType)}
+                disabled={isMutating}
+                aria-label={`Remove entity type ${entityType}`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <input
+            type="text"
+            value={entityTypeInput}
+            onChange={(event) => setEntityTypeInput(event.target.value)}
+            onKeyDown={handleEntityTypeInputKeyDown}
+            placeholder="Add entity type (e.g. EVENT)"
+            className="min-w-[220px] flex-1 rounded border px-3 py-2 text-sm"
+            disabled={isMutating}
+          />
+          <button type="button" className="rounded border px-3 py-2 text-sm" onClick={addEntityType} disabled={isMutating}>
+            Add type
+          </button>
+        </div>
+      </div>
 
       <div className="overflow-x-auto rounded border">
         <table className="min-w-full text-left text-sm">
@@ -181,7 +269,12 @@ export default function DocumentsPage() {
                     <button
                       type="button"
                       className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs"
-                      onClick={() => reindexMutation.mutate(document.id)}
+                      onClick={() =>
+                        reindexMutation.mutate({
+                          documentId: document.id,
+                          configuredEntityTypes: entityTypes,
+                        })
+                      }
                       disabled={isMutating}
                     >
                       <RefreshCw className="h-3.5 w-3.5" />
