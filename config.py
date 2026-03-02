@@ -28,4 +28,20 @@ def _read_int_env(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+def _read_bool_env(name: str, default: bool) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 CHUNK_SIZE = _read_int_env("CHUNK_SIZE", 1200)
+CHUNK_PARAGRAPHS_ENABLED = _read_bool_env("CHUNK_PARAGRAPHS_ENABLED", True)
+CHUNK_BULLET_LISTS_ENABLED = _read_bool_env("CHUNK_BULLET_LISTS_ENABLED", True)
+CHUNK_MIN_CHARS = _read_int_env("CHUNK_MIN_CHARS", 500)
