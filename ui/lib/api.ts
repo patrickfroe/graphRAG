@@ -143,9 +143,16 @@ export async function listDocuments(): Promise<DocumentItem[]> {
   }));
 }
 
-export async function uploadDocument(file: File): Promise<DocumentApiItem> {
+type EntityExtractionConfig = {
+  entityTypes?: string[];
+};
+
+export async function uploadDocument(file: File, config: EntityExtractionConfig = {}): Promise<DocumentApiItem> {
   const formData = new FormData();
   formData.append("file", file);
+  if (config.entityTypes && config.entityTypes.length > 0) {
+    formData.append("entity_types", JSON.stringify(config.entityTypes));
+  }
 
   return requestJson<DocumentApiItem>(`${API_BASE}/documents/upload`, {
     method: "POST",
@@ -159,9 +166,14 @@ export async function deleteDocument(documentId: string): Promise<{ status: stri
   });
 }
 
-export async function reindexDocument(documentId: string): Promise<{ reindexed: boolean }> {
+export async function reindexDocument(documentId: string, config: EntityExtractionConfig = {}): Promise<{ reindexed: boolean }> {
   return requestJson<{ reindexed: boolean }>(`${API_BASE}/documents/${documentId}/reindex`, {
     method: "POST",
+    body: JSON.stringify(
+      config.entityTypes && config.entityTypes.length > 0
+        ? { entity_types: config.entityTypes }
+        : {},
+    ),
   });
 }
 
