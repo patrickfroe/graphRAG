@@ -166,6 +166,54 @@ _PERSON_PATTERN = re.compile(r"\b([A-Z][a-z]+\s+[A-Z][a-z]+)\b")
 _COMPANY_PATTERN = re.compile(
     r"\b([A-Z][A-Za-z&.-]*(?:\s+[A-Z][A-Za-z&.-]*)*\s+(?:Inc|LLC|Ltd|GmbH|AG|Corp|Corporation|Company))\b"
 )
+_PERSON_BLOCKED_TOKENS = {
+    "am",
+    "an",
+    "auf",
+    "aus",
+    "beim",
+    "das",
+    "dem",
+    "den",
+    "der",
+    "des",
+    "die",
+    "ein",
+    "eine",
+    "einem",
+    "einen",
+    "einer",
+    "eines",
+    "für",
+    "im",
+    "in",
+    "mit",
+    "nach",
+    "seit",
+    "um",
+    "von",
+    "vom",
+    "vor",
+    "zum",
+    "zur",
+}
+_PERSON_BLOCKED_SUFFIXES = {
+    "hauptsitz",
+    "jahr",
+}
+
+
+def _looks_like_person(name: str) -> bool:
+    parts = [part.strip() for part in name.split() if part.strip()]
+    if len(parts) != 2:
+        return False
+
+    first, last = parts[0].lower(), parts[1].lower()
+    if first in _PERSON_BLOCKED_TOKENS:
+        return False
+    if last in _PERSON_BLOCKED_SUFFIXES:
+        return False
+    return True
 
 
 def _is_list_block(block: str) -> bool:
@@ -282,6 +330,8 @@ def _extract_entities(text: str, candidates: list[str] | None = None) -> list[di
     if "person" in requested:
         for match in _PERSON_PATTERN.findall(text):
             name = match.strip()
+            if not _looks_like_person(name):
+                continue
             if _COMPANY_PATTERN.search(name):
                 continue
             dedupe_key = ("person", name.lower())
