@@ -1,9 +1,9 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 
 import EvidenceDrawer from "@/components/EvidenceDrawer";
+import ForceGraph2D from "@/components/ForceGraph2D";
 import { graphDocument } from "@/lib/api";
 
 type GraphNode = {
@@ -32,10 +32,6 @@ type GraphDocumentResponse = {
 type ForceNode = GraphNode & { name: string };
 
 type ForceLink = GraphLink;
-
-const ForceGraph2D = dynamic(() => import("react-force-graph").then((mod) => mod.ForceGraph2D), {
-  ssr: false,
-});
 
 const NODE_COLORS: Record<string, string> = {
   Document: "#2563eb",
@@ -228,10 +224,10 @@ export default function GraphViewerPage({ params }: { params: { doc_id: string }
           graphData={graphData}
           nodeLabel="name"
           linkLabel="label"
-          nodeColor={(node) => nodeColorByType((node as ForceNode).type)}
+          nodeColor={(node: unknown) => nodeColorByType((node as ForceNode).type)}
           linkDirectionalArrowLength={4}
           linkDirectionalArrowRelPos={1}
-          onNodeClick={(node) => handleNodeClick(node as ForceNode)}
+          onNodeClick={(node: unknown) => handleNodeClick(node as ForceNode)}
         />
       </div>
 
