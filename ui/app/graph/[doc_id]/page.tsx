@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import EvidenceDrawer from "@/components/EvidenceDrawer";
 import ForceGraph2D from "@/components/ForceGraph2D";
@@ -29,7 +29,7 @@ type GraphDocumentResponse = {
   edges: GraphLink[];
 };
 
-type ForceNode = GraphNode & { name: string };
+type ForceNode = GraphNode & { name: string; x?: number; y?: number };
 
 type ForceLink = GraphLink;
 
@@ -113,6 +113,7 @@ export default function GraphViewerPage({ params }: { params: { doc_id: string }
   const [depth, setDepth] = useState(1);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerItems, setDrawerItems] = useState<Array<{ chunk_id: string; title?: string; text: string }>>([]);
+  const graphRef = useRef<{ zoomToFit: (durationMs?: number, padding?: number) => void } | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -151,6 +152,18 @@ export default function GraphViewerPage({ params }: { params: { doc_id: string }
     const nextVisible = visibleNodeIds(rootId, adjacency, depth + 1);
     return nextVisible.size === visibleIds.size;
   }, [rootId, adjacency, depth, visibleIds]);
+
+  useEffect(() => {
+    if (!loading && !error && graphData.nodes.length > 0) {
+      const timeout = window.setTimeout(() => {
+        graphRef.current?.zoomToFit(600, 64);
+      }, 80);
+
+      return () => window.clearTimeout(timeout);
+    }
+
+    return undefined;
+  }, [graphData, loading, error]);
 
   const handleNodeClick = (node: ForceNode) => {
     if (node.type === "Chunk") {
@@ -221,12 +234,34 @@ export default function GraphViewerPage({ params }: { params: { doc_id: string }
 
       <div className="h-[70vh] overflow-hidden rounded border">
         <ForceGraph2D
+          ref={graphRef}
           graphData={graphData}
           nodeLabel="name"
           linkLabel="label"
           nodeColor={(node: unknown) => nodeColorByType((node as ForceNode).type)}
+          nodeRelSize={7}
+          nodeCanvasObject={(node: unknown, ctx: CanvasRenderingContext2D, globalScale: number) => {
+            const graphNode = node as ForceNode;
+            const label = graphNode.label || graphNode.id;
+            const fontSize = Math.max(10, 14 / globalScale);
+            const nodeRadius = 5;
+
+            ctx.beginPath();
+            ctx.arc(graphNode.x ?? 0, graphNode.y ?? 0, nodeRadius, 0, 2 * Math.PI, false);
+            ctx.fillStyle = nodeColorByType(graphNode.type);
+            ctx.fill();
+
+            ctx.font = `${fontSize}px Inter, system-ui, sans-serif`;
+            ctx.fillStyle = "#0f172a";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "middle";
+            ctx.fillText(label, (graphNode.x ?? 0) + nodeRadius + 4, graphNode.y ?? 0);
+          }}
+          linkColor={() => "#64748b"}
+          linkWidth={1.5}
+          linkDirectionalArrowColor={() => "#475569"}
           linkDirectionalArrowLength={4}
-          linkDirectionalArrowRelPos={1}
+          linkDirectionalArrowRelPos={0.9}
           onNodeClick={(node: unknown) => handleNodeClick(node as ForceNode)}
         />
       </div>
