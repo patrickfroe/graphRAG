@@ -10,18 +10,18 @@ client = TestClient(app)
 
 
 def test_graph_preview_parses_entity_keys_and_builds_edges():
-    response = client.get("/graph/preview", params={"entity_keys": "A,B,C"})
+    response = client.get("/graph/preview", params={"entity_keys": "ID:A,ORG:neo4j,loc-123"})
 
     assert response.status_code == 200
     assert response.json() == {
         "nodes": [
-            {"id": "A", "label": "A", "type": "entity"},
-            {"id": "B", "label": "B", "type": "entity"},
-            {"id": "C", "label": "C", "type": "entity"},
+            {"id": "ID:A", "label": "A", "type": "entity"},
+            {"id": "ORG:neo4j", "label": "neo4j", "type": "entity"},
+            {"id": "loc-123", "label": "loc 123", "type": "entity"},
         ],
         "edges": [
-            {"source": "A", "target": "B", "label": "related_to"},
-            {"source": "B", "target": "C", "label": "related_to"},
+            {"source": "ID:A", "target": "ORG:neo4j", "label": "related_to"},
+            {"source": "ORG:neo4j", "target": "loc-123", "label": "related_to"},
         ],
     }
 

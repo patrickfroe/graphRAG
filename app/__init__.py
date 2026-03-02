@@ -27,8 +27,20 @@ class IngestRequest(BaseModel):
     documents: list[str | DocumentIn]
 
 
+def _entity_label(entity_key: str) -> str:
+    """Create a human-readable label from an entity key.
+
+    Keys often arrive in the form ``TYPE:name_or_id``. For display we prefer
+    the name portion instead of showing the full key/ID.
+    """
+
+    raw_name = entity_key.split(":", 1)[1] if ":" in entity_key else entity_key
+    normalized = raw_name.replace("_", " ").replace("-", " ").strip()
+    return normalized or entity_key
+
+
 def build_preview(entity_keys: list[str]) -> dict:
-    nodes = [{"id": key, "label": key, "type": "entity"} for key in entity_keys]
+    nodes = [{"id": key, "label": _entity_label(key), "type": "entity"} for key in entity_keys]
     edges = [
         {
             "source": entity_keys[idx],
