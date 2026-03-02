@@ -417,7 +417,11 @@ def fetch_document_graph_preview(
     max_edges: int = GRAPH_DOCUMENT_MAX_EDGES,
 ) -> GraphPreviewItem:
     if not NEO4J_URI or not NEO4J_USER or not NEO4J_PASSWORD:
-        raise HTTPException(status_code=500, detail="Neo4j configuration is missing")
+        return _build_document_graph_preview_from_vector_store(
+            doc_id=doc_id,
+            max_nodes=max_nodes,
+            max_edges=max_edges,
+        )
 
     if doc_id == "all":
         query = """
@@ -495,6 +499,35 @@ def fetch_document_graph_preview(
             break
 
     return GraphPreviewItem(nodes=nodes, edges=edges)
+
+
+def _build_document_graph_preview_from_vector_store(
+    doc_id: str,
+    max_nodes: int,
+    max_edges: int,
+) -> GraphPreviewItem:
+    bounded_max_nodes = max(0, max_nodes)
+    bounded_max_edges = max(0, max_edges)
+
+    relevant_docs = VECTOR_STORE if doc_id == "all" else [item for item in VECTOR_STORE if item.source == doc_id]
+
+    entity_keys: list[str] = []
+    seen_entity_keys: set[str] = set()
+
+    for document in relevant_docs:
+        for entity in document.entities:
+            key = str(entity.get("key", "")).strip()
+            if not key or key in seen_entity_keys:
+                continue
+            seen_entity_keys.add(key)
+            entity_keys.append(key)
+
+    if not entity_keys and doc_id != "all":
+        fallback_doc_chunks = [chunk_id for chunk_id, chunk in CHUNK_STORE.items() if chunk["doc_id"] == doc_id]
+        entity_keys.extend(fallback_doc_chunks)
+
+    preview = build_graph_preview(entity_keys, max_nodes=bounded_max_nodes, max_edges=bounded_max_edges)
+    return GraphPreviewItem(**preview)
 
 
 def _parse_multipart_files(body: bytes, content_type: str) -> list[tuple[str, bytes]]:
