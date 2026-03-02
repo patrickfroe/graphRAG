@@ -468,3 +468,24 @@ def test_evaluate_entity_extraction_metrics() -> None:
     )
     assert metrics["precision"] == 0.5
     assert metrics["recall"] == 1.0
+
+
+def test_entity_post_processing_clean_and_normalize_company() -> None:
+    assert main.clean_entity_name("Automobilzulieferer AutoSys AT") == "AutoSys AT"
+    assert main.normalize_company_name("AutoSys AT") == "AutoSys AG"
+
+
+def test_entity_post_processing_rejects_generic_false_positive() -> None:
+    extracted = main._extract_entities("Novatech Solutions", candidates=["company"])
+    assert all(entity["name"] != "Novatech" for entity in extracted)
+    assert all(entity["canonical_name"] != "novatech" for entity in extracted)
+
+
+def test_entity_post_processing_keeps_valid_person() -> None:
+    extracted = main._extract_entities("John Smith joined the meeting.", candidates=["person"])
+    assert any(entity["type"] == "person" and entity["name"] == "John Smith" for entity in extracted)
+
+
+def test_entity_post_processing_rejects_generic_technology_systems_phrase() -> None:
+    entity = {"name": "Global Technology Systems", "type": "company", "original_name": "Global Technology Systems"}
+    assert main.filter_false_entities(entity) is False
