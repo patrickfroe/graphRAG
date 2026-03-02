@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import re
 import json
+import asyncio
+import unicodedata
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List
+from typing import Any, List
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
@@ -26,6 +28,16 @@ try:
     from pymilvus import MilvusClient
 except Exception:  # pragma: no cover - optional in tests
     MilvusClient = None
+
+try:
+    from gliner import GLiNER
+except Exception:  # pragma: no cover - optional in tests
+    GLiNER = None
+
+try:
+    from rapidfuzz import fuzz
+except Exception:  # pragma: no cover - optional in tests
+    fuzz = None
 
 
 @dataclass
@@ -213,6 +225,31 @@ _CANDIDATE_ALIASES = {
     "org": "company",
     "organization": "company",
 }
+_GLINER_LABELS = [
+    "person",
+    "organization",
+    "company",
+    "product",
+    "technology",
+    "location",
+    "project",
+    "document",
+]
+_TYPE_ALIASES = {
+    "person": "person",
+    "organization": "organization",
+    "company": "company",
+    "org": "organization",
+    "product": "product",
+    "technology": "technology",
+    "tech": "technology",
+    "location": "location",
+    "project": "project",
+    "document": "document",
+}
+_RELATION_TYPES = {"WORKS_FOR", "PRODUCES"}
+_GLINER_MODEL = None
+_GLINER_MODEL_FAILED = False
 
 _OPENAI_CLIENT = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
@@ -322,27 +359,100 @@ def _chunk_text(text: str) -> list[str]:
 
 def _normalize_entity_candidates(candidates: list[str] | None) -> set[str]:
     if not candidates:
-        return {"person", "company"}
+        return {"person", "company", "organization", "product", "technology", "project"}
     normalized = {
         _CANDIDATE_ALIASES.get(candidate.strip().lower(), candidate.strip().lower())
         for candidate in candidates
         if candidate.strip()
     }
-    return normalized or {"person", "company"}
+    return normalized or {"person", "company", "organization", "product", "technology", "project"}
 
 
-def _extract_entities_with_llm(text: str, candidates: set[str]) -> list[dict[str, str]]:
+def _normalize_entity_name(name: str) -> str:
+    normalized = unicodedata.normalize("NFKD", name)
+    normalized = normalized.encode("ascii", "ignore").decode("ascii")
+    normalized = re.sub(r"[^\w\s]", "", normalized.lower())
+    return " ".join(normalized.split())
+
+
+def _canonical_entity_type(entity_type: str) -> str:
+    return _TYPE_ALIASES.get(entity_type.strip().lower(), entity_type.strip().lower())
+
+
+def _build_entity(name: str, entity_type: str, confidence: float = 0.0, source: str = "rule") -> dict[str, Any]:
+    canonical_name = " ".join(name.split()).strip()
+    canonical_type = _canonical_entity_type(entity_type)
+    return {
+        "name": canonical_name,
+        "canonical_name": canonical_name,
+        "normalized_name": _normalize_entity_name(canonical_name),
+        "type": canonical_type,
+        "confidence": max(0.0, min(1.0, confidence)),
+        "source": source,
+        "key": f"{canonical_type}:{_normalize_entity_name(canonical_name)}",
+    }
+
+
+def _get_gliner_model():
+    global _GLINER_MODEL, _GLINER_MODEL_FAILED
+    if _GLINER_MODEL is not None or _GLINER_MODEL_FAILED or GLiNER is None:
+        return _GLINER_MODEL
+    try:
+        _GLINER_MODEL = GLiNER.from_pretrained("numind/NuNerZero")
+    except Exception:
+        _GLINER_MODEL_FAILED = True
+    return _GLINER_MODEL
+
+
+def extract_entities_gliner(text: str) -> list[dict[str, Any]]:
+    if not text.strip():
+        return []
+    model = _get_gliner_model()
+    if model is None:
+        return []
+
+    try:
+        raw_entities = model.predict_entities(text, _GLINER_LABELS)
+    except Exception:
+        return []
+
+    entities: list[dict[str, Any]] = []
+    for item in raw_entities:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("text", "")).strip()
+        entity_type = _canonical_entity_type(str(item.get("label", "")).strip())
+        score = float(item.get("score", 0.0) or 0.0)
+        if not name or not entity_type:
+            continue
+        entities.append(_build_entity(name, entity_type, confidence=score, source="gliner"))
+    return entities
+
+
+def _extract_entities_with_llm(text: str, candidates: set[str]) -> list[dict[str, Any]]:
     if _OPENAI_CLIENT is None or not text.strip() or not candidates:
         return []
 
+    allowed = [candidate.upper() for candidate in sorted(candidates)]
     prompt = (
-        "Extract entities from the document text.\n"
-        f"Allowed entity types (strict): {', '.join(sorted(candidates))}.\n"
-        "Rules:\n"
-        "- Return ONLY entities that belong to one of the allowed types.\n"
-        "- Do not invent entities.\n"
-        "- Output strict JSON with shape: {\"entities\":[{\"name\":\"...\",\"type\":\"...\"}]}.\n"
-        "- type must match one of the allowed types exactly (lowercase).\n"
+        "TASK:\n"
+        "Extract entities from the following text.\n\n"
+        "Return ONLY JSON.\n\n"
+        "Entity types allowed:\n"
+        + "\n".join(allowed)
+        + "\n\nRules:\n"
+        "- Include companies\n"
+        "- Include people\n"
+        "- Include products\n"
+        "- Normalize names\n"
+        "- Remove duplicates\n\n"
+        "Output JSON:\n"
+        "{\n"
+        ' "entities":[\n'
+        '   {"name":"Microsoft","type":"COMPANY"},\n'
+        '   {"name":"Satya Nadella","type":"PERSON"}\n'
+        " ]\n"
+        "}\n\n"
         f"Text:\n{text}"
     )
 
@@ -352,50 +462,31 @@ def _extract_entities_with_llm(text: str, candidates: set[str]) -> list[dict[str
             temperature=0,
             response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": "You extract entities from text in strict JSON."},
+                {"role": "system", "content": "You are an expert knowledge graph extraction engine."},
                 {"role": "user", "content": prompt},
             ],
         )
-        content = response.choices[0].message.content or "{}"
-        payload = json.loads(content)
+        payload = json.loads(response.choices[0].message.content or "{}")
     except Exception:
         return []
 
-    entities: list[dict[str, str]] = []
+    entities: list[dict[str, Any]] = []
     for item in payload.get("entities", []):
         if not isinstance(item, dict):
             continue
         name = str(item.get("name", "")).strip()
-        entity_type = str(item.get("type", "")).strip().lower()
+        entity_type = _canonical_entity_type(str(item.get("type", "")).strip())
         if not name or entity_type not in candidates:
             continue
-        entities.append({"key": f"{entity_type}:{name.lower()}", "name": name, "type": entity_type})
+        entities.append(_build_entity(name, entity_type, confidence=0.75, source="llm"))
     return entities
 
 
-def _extract_entities(text: str, candidates: list[str] | None = None) -> list[dict[str, str]]:
-    requested = _normalize_entity_candidates(candidates)
-    entities: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-
-    llm_entities = _extract_entities_with_llm(text, requested)
-    if llm_entities:
-        for entity in llm_entities:
-            dedupe_key = (entity["type"], entity["name"].lower())
-            if dedupe_key in seen:
-                continue
-            seen.add(dedupe_key)
-            entities.append(entity)
-        return entities
-
-    if "company" in requested:
+def _extract_entities_regex(text: str, requested: set[str]) -> list[dict[str, Any]]:
+    entities: list[dict[str, Any]] = []
+    if "company" in requested or "organization" in requested:
         for match in _COMPANY_PATTERN.findall(text):
-            key = match.strip()
-            dedupe_key = ("company", key.lower())
-            if dedupe_key in seen:
-                continue
-            seen.add(dedupe_key)
-            entities.append({"key": f"company:{key.lower()}", "name": key, "type": "company"})
+            entities.append(_build_entity(match.strip(), "company", confidence=0.65, source="regex"))
 
     if "person" in requested:
         for match in _PERSON_PATTERN.findall(text):
@@ -404,13 +495,145 @@ def _extract_entities(text: str, candidates: list[str] | None = None) -> list[di
                 continue
             if _COMPANY_PATTERN.search(name):
                 continue
-            dedupe_key = ("person", name.lower())
-            if dedupe_key in seen:
-                continue
-            seen.add(dedupe_key)
-            entities.append({"key": f"person:{name.lower()}", "name": name, "type": "person"})
-
+            entities.append(_build_entity(name, "person", confidence=0.6, source="regex"))
     return entities
+
+
+def merge_entities(*entity_lists: list[dict[str, Any]], threshold: float = 0.9) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    for entities in entity_lists:
+        for entity in entities:
+            norm = str(entity.get("normalized_name") or _normalize_entity_name(str(entity.get("name", ""))))
+            if not norm:
+                continue
+            matched = None
+            for existing in merged:
+                if existing["type"] != entity.get("type"):
+                    continue
+                score = 0.0
+                if fuzz is not None:
+                    score = float(fuzz.ratio(norm, existing["normalized_name"])) / 100.0
+                elif norm == existing["normalized_name"]:
+                    score = 1.0
+                if score >= threshold:
+                    matched = existing
+                    break
+            if matched is None:
+                merged.append(dict(entity, normalized_name=norm, frequency=1))
+            else:
+                matched["frequency"] = int(matched.get("frequency", 1)) + 1
+                matched["confidence"] = max(float(matched.get("confidence", 0.0)), float(entity.get("confidence", 0.0)))
+                if len(str(entity.get("canonical_name", ""))) > len(str(matched.get("canonical_name", ""))):
+                    matched["name"] = entity.get("name", matched["name"])
+                    matched["canonical_name"] = entity.get("canonical_name", matched.get("canonical_name"))
+    return merged
+
+
+def link_entity(entity_name: str, entity_type: str = "") -> dict[str, str | None]:
+    canonical_name = " ".join(entity_name.split()).strip()
+    return {
+        "name": entity_name,
+        "canonical_name": canonical_name,
+        "wikidata_id": None,
+        "type": _canonical_entity_type(entity_type) if entity_type else "unknown",
+    }
+
+
+def _rank_entities(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ranked: list[dict[str, Any]] = []
+    for entity in entities:
+        frequency = float(entity.get("frequency", 1))
+        confidence = float(entity.get("confidence", 0.0))
+        score = min(1.0, (frequency * 0.6) + (confidence * 0.4))
+        if score < 0.3:
+            continue
+        enriched = dict(entity)
+        enriched["score"] = round(score, 4)
+        ranked.append(enriched)
+    return ranked
+
+
+def _extract_entities(text: str, candidates: list[str] | None = None) -> list[dict[str, Any]]:
+    requested = _normalize_entity_candidates(candidates)
+    gliner_entities = [e for e in extract_entities_gliner(text) if e["type"] in requested]
+    llm_entities = _extract_entities_with_llm(text, requested)
+    regex_entities = _extract_entities_regex(text, requested)
+    merged = merge_entities(gliner_entities, llm_entities, regex_entities, threshold=0.9)
+    ranked = _rank_entities(merged)
+
+    output: list[dict[str, Any]] = []
+    for entity in ranked:
+        linked = link_entity(entity.get("canonical_name", entity.get("name", "")), entity.get("type", ""))
+        output.append(
+            {
+                "key": entity["key"],
+                "name": entity["name"],
+                "type": entity["type"],
+                "canonical_name": linked["canonical_name"],
+                "confidence": entity.get("confidence", 0.0),
+                "score": entity.get("score", 0.0),
+                "wikidata_id": linked["wikidata_id"],
+            }
+        )
+    return output
+
+
+async def extract_entities_batch(chunks: list[str], candidates: list[str] | None = None) -> list[list[dict[str, Any]]]:
+    tasks = [asyncio.to_thread(_extract_entities, chunk, candidates) for chunk in chunks]
+    return await asyncio.gather(*tasks)
+
+
+def extract_relationships_llm(text: str) -> list[dict[str, str]]:
+    if _OPENAI_CLIENT is None or not text.strip():
+        return []
+    prompt = (
+        "Extract relationships and return strict JSON with shape "
+        "{\"relationships\":[{\"source\":\"...\",\"target\":\"...\",\"type\":\"WORKS_FOR\"}]}. "
+        "Allowed relationship types: WORKS_FOR, PRODUCES. "
+        f"Text: {text}"
+    )
+    try:
+        response = _OPENAI_CLIENT.chat.completions.create(
+            model=OPENAI_CHAT_MODEL,
+            temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "You extract graph relationships in JSON."},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        payload = json.loads(response.choices[0].message.content or "{}")
+    except Exception:
+        return []
+
+    relationships: list[dict[str, str]] = []
+    for item in payload.get("relationships", []):
+        if not isinstance(item, dict):
+            continue
+        rel_type = str(item.get("type", "")).strip().upper()
+        source = str(item.get("source", "")).strip()
+        target = str(item.get("target", "")).strip()
+        if rel_type not in _RELATION_TYPES or not source or not target:
+            continue
+        relationships.append({"source": source, "target": target, "type": rel_type})
+    return relationships
+
+
+def evaluate_entity_extraction(predicted: list[dict[str, Any]], reference: list[dict[str, str]]) -> dict[str, float | int]:
+    predicted_set = {(str(e.get("name", "")).lower(), str(e.get("type", "")).lower()) for e in predicted}
+    reference_set = {(str(e.get("name", "")).lower(), str(e.get("type", "")).lower()) for e in reference}
+    true_positive = len(predicted_set & reference_set)
+    precision = true_positive / len(predicted_set) if predicted_set else 0.0
+    recall = true_positive / len(reference_set) if reference_set else 0.0
+    return {
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+        "entity_frequency": len(predicted),
+    }
+
+
+def build_graph_entities_output(entities: list[dict[str, Any]], relationships: list[dict[str, str]]) -> dict[str, list[dict[str, Any]]]:
+    return {"entities": entities, "relationships": relationships}
 
 
 def _summarize_document_entities(doc_id: str) -> tuple[int, list[dict[str, str | int]]]:
@@ -440,7 +663,7 @@ def _summarize_document_entities(doc_id: str) -> tuple[int, list[dict[str, str |
     return len(entities), entities
 
 
-def _persist_document_neo4j(document: DocumentResponse, chunks: list[tuple[str, str]]) -> None:
+def _persist_document_neo4j(document: DocumentResponse, chunks: list[tuple[str, str]], chunk_entities: dict[str, list[dict[str, Any]]] | None = None) -> None:
     if not (GraphDatabase and NEO4J_URI and NEO4J_USER and NEO4J_PASSWORD):
         return
 
@@ -473,6 +696,34 @@ def _persist_document_neo4j(document: DocumentResponse, chunks: list[tuple[str, 
                 chunk_id=chunk_id,
                 text=chunk_text,
             )
+            for entity in (chunk_entities or {}).get(chunk_id, []):
+                session.run(
+                    """
+                    MATCH (c:Chunk {chunk_id: $chunk_id})
+                    MERGE (e:Entity {name: $name, type: $type})
+                    SET e.canonical_name = $canonical_name,
+                        e.score = $score,
+                        e.wikidata_id = $wikidata_id
+                    MERGE (c)-[:MENTIONS]->(e)
+                    """,
+                    chunk_id=chunk_id,
+                    name=entity.get("name", ""),
+                    type=entity.get("type", "unknown"),
+                    canonical_name=entity.get("canonical_name", entity.get("name", "")),
+                    score=float(entity.get("score", 0.0) or 0.0),
+                    wikidata_id=entity.get("wikidata_id"),
+                )
+            for relation in extract_relationships_llm(chunk_text):
+                session.run(
+                    """
+                    MERGE (src:Entity {name: $source_name})
+                    MERGE (dst:Entity {name: $target_name})
+                    MERGE (src)-[r:RELATES {type: $rel_type}]->(dst)
+                    """,
+                    source_name=relation["source"],
+                    target_name=relation["target"],
+                    rel_type=relation["type"],
+                )
     driver.close()
 
 
@@ -789,13 +1040,14 @@ async def ingest(request: Request) -> IngestResponse:
     if not documents:
         raise HTTPException(status_code=400, detail="No documents provided")
 
-    for i, content in enumerate(documents, start=len(VECTOR_STORE) + 1):
+    batch_entities = await extract_entities_batch(documents, entity_candidates)
+    for i, (content, entities) in enumerate(zip(documents, batch_entities), start=len(VECTOR_STORE) + 1):
         VECTOR_STORE.append(
             Document(
                 id=str(i),
                 content=content,
                 source=f"doc-{i}",
-                entities=_extract_entities(content, candidates=entity_candidates),
+                entities=entities,
             )
         )
 
@@ -869,20 +1121,23 @@ async def upload_document(request: Request) -> DocumentResponse:
     DOCUMENT_ENTITY_TYPES[doc_id] = configured_entity_types
 
     chunk_pairs: list[tuple[str, str]] = []
-    for chunk_text in chunks:
+    chunk_entities_map: dict[str, list[dict[str, Any]]] = {}
+    extracted_batch = await extract_entities_batch(chunks, configured_entity_types)
+    for chunk_text, entities in zip(chunks, extracted_batch):
         chunk_id = str(uuid4())
         chunk_pairs.append((chunk_id, chunk_text))
+        chunk_entities_map[chunk_id] = entities
         CHUNK_STORE[chunk_id] = {"doc_id": doc_id, "text": chunk_text}
         VECTOR_STORE.append(
             Document(
                 id=chunk_id,
                 content=chunk_text,
                 source=doc_id,
-                entities=_extract_entities(chunk_text, candidates=configured_entity_types),
+                entities=entities,
             )
         )
 
-    _persist_document_neo4j(document, chunk_pairs)
+    _persist_document_neo4j(document, chunk_pairs, chunk_entities_map)
 
     entity_count, entities = _summarize_document_entities(doc_id)
     return document.model_copy(update={"extracted_entity_count": entity_count, "extracted_entities": entities})
@@ -956,16 +1211,19 @@ async def reindex_document(doc_id: str, request: Request) -> dict[str, object]:
     VECTOR_STORE[:] = [item for item in VECTOR_STORE if item.source != doc_id]
 
     chunk_pairs: list[tuple[str, str]] = []
-    for chunk_text in chunks:
+    chunk_entities_map: dict[str, list[dict[str, Any]]] = {}
+    extracted_batch = await extract_entities_batch(chunks, configured_entity_types)
+    for chunk_text, entities in zip(chunks, extracted_batch):
         chunk_id = str(uuid4())
         chunk_pairs.append((chunk_id, chunk_text))
+        chunk_entities_map[chunk_id] = entities
         CHUNK_STORE[chunk_id] = {"doc_id": doc_id, "text": chunk_text}
         VECTOR_STORE.append(
             Document(
                 id=chunk_id,
                 content=chunk_text,
                 source=doc_id,
-                entities=_extract_entities(chunk_text, candidates=configured_entity_types),
+                entities=entities,
             )
         )
 
@@ -973,7 +1231,7 @@ async def reindex_document(doc_id: str, request: Request) -> dict[str, object]:
     DOCUMENT_STORE[doc_id] = updated_document
 
     _delete_document_neo4j(doc_id)
-    _persist_document_neo4j(updated_document, chunk_pairs)
+    _persist_document_neo4j(updated_document, chunk_pairs, chunk_entities_map)
     _delete_embeddings_milvus(doc_id)
 
     return {"reindexed": True, "doc_id": doc_id, "chunk_count": len(chunks)}

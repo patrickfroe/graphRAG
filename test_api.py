@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -442,3 +443,28 @@ def test_chunk_min_chars_is_configurable(monkeypatch) -> None:
     chunks = main._chunk_text("Kurz\n\nDieser Absatz ist ausreichend lang")
 
     assert chunks == ["Kurz\n\nDieser Absatz ist ausreichend lang"]
+
+
+def test_merge_entities_deduplicates_fuzzy_matches() -> None:
+    merged = main.merge_entities(
+        [main._build_entity("Microsoft", "company", confidence=0.9, source="a")],
+        [main._build_entity("Microsoft.", "company", confidence=0.8, source="b")],
+    )
+
+    assert len(merged) == 1
+    assert merged[0]["frequency"] == 2
+
+
+def test_extract_entities_batch_runs_for_all_chunks() -> None:
+    results = asyncio.run(main.extract_entities_batch(["Alice Johnson at Acme GmbH", "No entity here"], ["person", "company"]))
+    assert len(results) == 2
+    assert any(entity["type"] == "person" for entity in results[0])
+
+
+def test_evaluate_entity_extraction_metrics() -> None:
+    metrics = main.evaluate_entity_extraction(
+        predicted=[{"name": "Alice Johnson", "type": "person"}, {"name": "Acme GmbH", "type": "company"}],
+        reference=[{"name": "Alice Johnson", "type": "person"}],
+    )
+    assert metrics["precision"] == 0.5
+    assert metrics["recall"] == 1.0
