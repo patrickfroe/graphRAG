@@ -221,13 +221,14 @@ export default function DocumentsPage() {
               <th className="px-3 py-2">file_name</th>
               <th className="px-3 py-2">uploaded_at</th>
               <th className="px-3 py-2">chunk_count</th>
+              <th className="px-3 py-2">entities</th>
               <th className="px-3 py-2">actions</th>
             </tr>
           </thead>
           <tbody>
             {isLoading && (
               <tr>
-                <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">
+                <td colSpan={6} className="px-3 py-4 text-center text-muted-foreground">
                   Loading documents...
                 </td>
               </tr>
@@ -235,7 +236,7 @@ export default function DocumentsPage() {
 
             {!isLoading && documents.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">
+                <td colSpan={6} className="px-3 py-4 text-center text-muted-foreground">
                   No documents found.
                 </td>
               </tr>
@@ -247,6 +248,25 @@ export default function DocumentsPage() {
                 <td className="px-3 py-2">{document.file_name}</td>
                 <td className="px-3 py-2">{formatDate(document.uploaded_at)}</td>
                 <td className="px-3 py-2">{document.chunk_count}</td>
+                <td className="px-3 py-2">
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium">{document.extracted_entity_count} found</div>
+                    {document.extracted_entities.length > 0 ? (
+                      <div className="flex max-w-[360px] flex-wrap gap-1">
+                        {document.extracted_entities.slice(0, 6).map((entity) => (
+                          <span key={entity.key} className="rounded-full border px-2 py-0.5 text-[10px]">
+                            {entity.name} <span className="text-muted-foreground">({entity.type}, {entity.mentions})</span>
+                          </span>
+                        ))}
+                        {document.extracted_entities.length > 6 && (
+                          <span className="text-[10px] text-muted-foreground">+{document.extracted_entities.length - 6} more</span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground">No entities extracted yet.</div>
+                    )}
+                  </div>
+                </td>
                 <td className="px-3 py-2">
                   <div className="flex flex-wrap gap-2">
                     <button

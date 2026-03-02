@@ -42,6 +42,13 @@ type DocumentApiItem = {
   file_name: string;
   uploaded_at: string;
   chunk_count: number;
+  extracted_entity_count?: number;
+  extracted_entities?: Array<{
+    key: string;
+    name: string;
+    type: string;
+    mentions: number;
+  }>;
 };
 
 export type DocumentItem = {
@@ -50,6 +57,13 @@ export type DocumentItem = {
   file_name: string;
   uploaded_at: string;
   chunk_count: number;
+  extracted_entity_count: number;
+  extracted_entities: Array<{
+    key: string;
+    name: string;
+    type: string;
+    mentions: number;
+  }>;
 };
 
 async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
@@ -140,6 +154,8 @@ export async function listDocuments(): Promise<DocumentItem[]> {
     file_name: document.file_name,
     uploaded_at: document.uploaded_at,
     chunk_count: document.chunk_count,
+    extracted_entity_count: document.extracted_entity_count ?? 0,
+    extracted_entities: document.extracted_entities ?? [],
   }));
 }
 

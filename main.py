@@ -55,6 +55,8 @@ class DocumentResponse(BaseModel):
     file_name: str
     uploaded_at: datetime
     chunk_count: int
+    extracted_entity_count: int = 0
+    extracted_entities: list[dict[str, str | int]] = Field(default_factory=list)
 
 
 class DocumentUpdateRequest(BaseModel):
@@ -289,6 +291,33 @@ def _extract_entities(text: str, candidates: list[str] | None = None) -> list[di
             entities.append({"key": f"person:{name.lower()}", "name": name, "type": "person"})
 
     return entities
+
+
+def _summarize_document_entities(doc_id: str) -> tuple[int, list[dict[str, str | int]]]:
+    entity_counts: dict[tuple[str, str], dict[str, str | int]] = {}
+
+    for vector_item in VECTOR_STORE:
+        if vector_item.source != doc_id:
+            continue
+        for entity in vector_item.entities:
+            entity_type = str(entity.get("type", "unknown"))
+            entity_name = str(entity.get("name", ""))
+            entity_key = str(entity.get("key", f"{entity_type}:{entity_name.lower()}"))
+            dedupe_key = (entity_type.lower(), entity_name.lower())
+            if dedupe_key not in entity_counts:
+                entity_counts[dedupe_key] = {
+                    "key": entity_key,
+                    "name": entity_name,
+                    "type": entity_type,
+                    "mentions": 0,
+                }
+            entity_counts[dedupe_key]["mentions"] = int(entity_counts[dedupe_key]["mentions"]) + 1
+
+    entities = sorted(
+        entity_counts.values(),
+        key=lambda item: (-int(item["mentions"]), str(item["name"]).lower()),
+    )
+    return len(entities), entities
 
 
 def _persist_document_neo4j(document: DocumentResponse, chunks: list[tuple[str, str]]) -> None:
@@ -598,7 +627,19 @@ async def ingest(request: Request) -> IngestResponse:
 
 @app.get("/documents", response_model=list[DocumentResponse])
 def list_documents() -> list[DocumentResponse]:
-    return sorted(DOCUMENT_STORE.values(), key=lambda item: item.uploaded_at, reverse=True)
+    hydrated_documents: list[DocumentResponse] = []
+    for document in DOCUMENT_STORE.values():
+        entity_count, entities = _summarize_document_entities(document.doc_id)
+        hydrated_documents.append(
+            document.model_copy(
+                update={
+                    "extracted_entity_count": entity_count,
+                    "extracted_entities": entities,
+                }
+            )
+        )
+
+    return sorted(hydrated_documents, key=lambda item: item.uploaded_at, reverse=True)
 
 
 @app.get("/documents/{doc_id}", response_model=DocumentResponse)
@@ -606,7 +647,8 @@ def get_document(doc_id: str) -> DocumentResponse:
     document = DOCUMENT_STORE.get(doc_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-    return document
+    entity_count, entities = _summarize_document_entities(doc_id)
+    return document.model_copy(update={"extracted_entity_count": entity_count, "extracted_entities": entities})
 
 
 @app.post("/documents/upload", response_model=DocumentResponse)
@@ -663,7 +705,8 @@ async def upload_document(request: Request) -> DocumentResponse:
 
     _persist_document_neo4j(document, chunk_pairs)
 
-    return document
+    entity_count, entities = _summarize_document_entities(doc_id)
+    return document.model_copy(update={"extracted_entity_count": entity_count, "extracted_entities": entities})
 
 
 @app.put("/documents/{doc_id}", response_model=DocumentResponse)
@@ -676,7 +719,8 @@ def update_document(doc_id: str, payload: DocumentUpdateRequest) -> DocumentResp
     updated_document = document.model_copy(update={"title": new_title})
     DOCUMENT_STORE[doc_id] = updated_document
     DOCUMENT_METADATA[doc_id] = payload.metadata
-    return updated_document
+    entity_count, entities = _summarize_document_entities(doc_id)
+    return updated_document.model_copy(update={"extracted_entity_count": entity_count, "extracted_entities": entities})
 
 
 @app.delete("/documents/{doc_id}")
