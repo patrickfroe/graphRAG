@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 import main
-from main import CHUNK_STORE, DOCUMENT_METADATA, DOCUMENT_STORE, VECTOR_STORE, app
+from main import CHUNK_STORE, DOCUMENT_ENTITY_TYPES, DOCUMENT_METADATA, DOCUMENT_STORE, VECTOR_STORE, app
 
 
 client = TestClient(app)
@@ -14,6 +14,7 @@ def setup_function() -> None:
     DOCUMENT_STORE.clear()
     CHUNK_STORE.clear()
     DOCUMENT_METADATA.clear()
+    DOCUMENT_ENTITY_TYPES.clear()
 
 
 def test_ingest_and_chat_returns_sources() -> None:
@@ -115,6 +116,50 @@ def test_entity_extraction_filters_german_false_positive_persons() -> None:
     assert "Alice Johnson" in names
     assert "Der Hauptsitz" not in names
     assert "Im Jahr" not in names
+
+
+
+def test_ingest_respects_allowed_entity_types_only() -> None:
+    ingest_response = client.post(
+        "/ingest",
+        json={
+            "documents": ["Alice Johnson met with Acme GmbH leadership"],
+            "entity_candidates": ["company"],
+        },
+    )
+
+    assert ingest_response.status_code == 200
+    extracted = VECTOR_STORE[0].entities
+    assert extracted
+    assert all(entity["type"] == "company" for entity in extracted)
+    assert all(entity["name"] != "Alice Johnson" for entity in extracted)
+
+
+def test_document_upload_and_reindex_use_configured_entity_types(tmp_path: Path) -> None:
+    main.UPLOAD_DIR = tmp_path
+
+    upload_response = client.post(
+        "/documents/upload",
+        files={"file": ("report.txt", "Alice Johnson met with Acme GmbH leadership", "text/plain")},
+        data={"entity_types": '["company"]'},
+    )
+
+    assert upload_response.status_code == 200
+    doc = upload_response.json()
+    doc_id = doc["doc_id"]
+    listed = client.get(f"/documents/{doc_id}").json()["extracted_entities"]
+    assert listed
+    assert all(entity["type"] == "company" for entity in listed)
+
+    reindex_response = client.post(
+        f"/documents/{doc_id}/reindex",
+        json={"entity_types": ["person"]},
+    )
+    assert reindex_response.status_code == 200
+
+    updated = client.get(f"/documents/{doc_id}").json()["extracted_entities"]
+    assert updated
+    assert all(entity["type"] == "person" for entity in updated)
 
 
 def test_graph_preview_and_evidence_endpoints() -> None:

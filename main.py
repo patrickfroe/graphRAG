@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import json
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,8 +13,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from neo4j import GraphDatabase
 from pydantic import BaseModel, Field, model_validator
 
-from config import CHUNK_SIZE, MILVUS_URI, NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
+from config import CHUNK_SIZE, MILVUS_URI, NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER, OPENAI_API_KEY, OPENAI_CHAT_MODEL
 from config import CHUNK_BULLET_LISTS_ENABLED, CHUNK_MIN_CHARS, CHUNK_PARAGRAPHS_ENABLED
+from openai import OpenAI
 
 try:
     from neo4j import GraphDatabase
@@ -155,6 +157,7 @@ DOCUMENT_STORE: dict[str, DocumentResponse] = {}
 CHUNK_STORE: dict[str, dict[str, str]] = {}
 UPLOAD_DIR = Path("/data/uploads")
 DOCUMENT_METADATA: dict[str, dict[str, str]] = {}
+DOCUMENT_ENTITY_TYPES: dict[str, list[str]] = {}
 
 GRAPH_PREVIEW_DEFAULT_NODE_LIMIT = 50
 GRAPH_PREVIEW_DEFAULT_EDGE_LIMIT = 100
@@ -201,6 +204,17 @@ _PERSON_BLOCKED_SUFFIXES = {
     "hauptsitz",
     "jahr",
 }
+_CANDIDATE_ALIASES = {
+    "person": "person",
+    "people": "person",
+    "persons": "person",
+    "company": "company",
+    "companies": "company",
+    "org": "company",
+    "organization": "company",
+}
+
+_OPENAI_CLIENT = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 
 def _looks_like_person(name: str) -> bool:
@@ -309,14 +323,70 @@ def _chunk_text(text: str) -> list[str]:
 def _normalize_entity_candidates(candidates: list[str] | None) -> set[str]:
     if not candidates:
         return {"person", "company"}
-    normalized = {candidate.strip().lower() for candidate in candidates if candidate.strip()}
+    normalized = {
+        _CANDIDATE_ALIASES.get(candidate.strip().lower(), candidate.strip().lower())
+        for candidate in candidates
+        if candidate.strip()
+    }
     return normalized or {"person", "company"}
+
+
+def _extract_entities_with_llm(text: str, candidates: set[str]) -> list[dict[str, str]]:
+    if _OPENAI_CLIENT is None or not text.strip() or not candidates:
+        return []
+
+    prompt = (
+        "Extract entities from the document text.\n"
+        f"Allowed entity types (strict): {', '.join(sorted(candidates))}.\n"
+        "Rules:\n"
+        "- Return ONLY entities that belong to one of the allowed types.\n"
+        "- Do not invent entities.\n"
+        "- Output strict JSON with shape: {\"entities\":[{\"name\":\"...\",\"type\":\"...\"}]}.\n"
+        "- type must match one of the allowed types exactly (lowercase).\n"
+        f"Text:\n{text}"
+    )
+
+    try:
+        response = _OPENAI_CLIENT.chat.completions.create(
+            model=OPENAI_CHAT_MODEL,
+            temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "You extract entities from text in strict JSON."},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        content = response.choices[0].message.content or "{}"
+        payload = json.loads(content)
+    except Exception:
+        return []
+
+    entities: list[dict[str, str]] = []
+    for item in payload.get("entities", []):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()
+        entity_type = str(item.get("type", "")).strip().lower()
+        if not name or entity_type not in candidates:
+            continue
+        entities.append({"key": f"{entity_type}:{name.lower()}", "name": name, "type": entity_type})
+    return entities
 
 
 def _extract_entities(text: str, candidates: list[str] | None = None) -> list[dict[str, str]]:
     requested = _normalize_entity_candidates(candidates)
     entities: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
+
+    llm_entities = _extract_entities_with_llm(text, requested)
+    if llm_entities:
+        for entity in llm_entities:
+            dedupe_key = (entity["type"], entity["name"].lower())
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            entities.append(entity)
+        return entities
 
     if "company" in requested:
         for match in _COMPANY_PATTERN.findall(text):
@@ -609,7 +679,7 @@ def _build_document_graph_preview_from_vector_store(
     return GraphPreviewItem(**preview)
 
 
-def _parse_multipart_files(body: bytes, content_type: str) -> list[tuple[str, bytes]]:
+def _parse_multipart_form_data(body: bytes, content_type: str) -> tuple[list[tuple[str, bytes]], dict[str, str]]:
     boundary_match = re.search(r'boundary="?([^";]+)"?', content_type)
     if not boundary_match:
         raise HTTPException(status_code=400, detail="Missing multipart boundary")
@@ -618,6 +688,7 @@ def _parse_multipart_files(body: bytes, content_type: str) -> list[tuple[str, by
     delimiter = b"--" + boundary
     parts = body.split(delimiter)
     files: list[tuple[str, bytes]] = []
+    fields: dict[str, str] = {}
 
     for part in parts:
         chunk = part.strip()
@@ -637,14 +708,37 @@ def _parse_multipart_files(body: bytes, content_type: str) -> list[tuple[str, by
                 content_disposition = header_line
                 break
 
+        name_match = re.search(r'name="([^"]*)"', content_disposition)
         filename_match = re.search(r'filename="([^"]*)"', content_disposition)
-        if not filename_match:
+        if filename_match:
+            filename = filename_match.group(1)
+            files.append((filename, payload.rstrip(b"\r\n")))
             continue
 
-        filename = filename_match.group(1)
-        files.append((filename, payload.rstrip(b"\r\n")))
+        if not name_match:
+            continue
+
+        fields[name_match.group(1)] = payload.rstrip(b"\r\n").decode("utf-8", errors="ignore")
+
+    return files, fields
+
+
+def _parse_multipart_files(body: bytes, content_type: str) -> list[tuple[str, bytes]]:
+    files, _fields = _parse_multipart_form_data(body, content_type)
 
     return files
+
+
+def _parse_entity_types(raw_value: str | None) -> list[str]:
+    if not raw_value:
+        return []
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item).strip().lower() for item in parsed if str(item).strip()]
 
 
 @app.post("/ingest", response_model=IngestResponse)
@@ -740,7 +834,7 @@ async def upload_document(request: Request) -> DocumentResponse:
     if "multipart/form-data" not in content_type:
         raise HTTPException(status_code=415, detail="Unsupported content type")
 
-    files = _parse_multipart_files(await request.body(), content_type)
+    files, fields = _parse_multipart_form_data(await request.body(), content_type)
     if not files:
         raise HTTPException(status_code=400, detail="No file provided")
 
@@ -756,6 +850,7 @@ async def upload_document(request: Request) -> DocumentResponse:
     doc_id = str(uuid4())
     upload_time = datetime.now(tz=timezone.utc)
     chunks = _chunk_text(text)
+    configured_entity_types = _parse_entity_types(fields.get("entity_types"))
 
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     safe_file_name = Path(file_name).name
@@ -771,6 +866,7 @@ async def upload_document(request: Request) -> DocumentResponse:
     )
     DOCUMENT_STORE[doc_id] = document
     DOCUMENT_METADATA[doc_id] = {}
+    DOCUMENT_ENTITY_TYPES[doc_id] = configured_entity_types
 
     chunk_pairs: list[tuple[str, str]] = []
     for chunk_text in chunks:
@@ -782,7 +878,7 @@ async def upload_document(request: Request) -> DocumentResponse:
                 id=chunk_id,
                 content=chunk_text,
                 source=doc_id,
-                entities=_extract_entities(chunk_text),
+                entities=_extract_entities(chunk_text, candidates=configured_entity_types),
             )
         )
 
@@ -818,6 +914,7 @@ def delete_document(doc_id: str) -> dict[str, str]:
 
     VECTOR_STORE[:] = [item for item in VECTOR_STORE if item.source != doc_id]
     DOCUMENT_METADATA.pop(doc_id, None)
+    DOCUMENT_ENTITY_TYPES.pop(doc_id, None)
 
     _delete_document_neo4j(doc_id)
     _delete_embeddings_milvus(doc_id)
@@ -830,7 +927,7 @@ def delete_document(doc_id: str) -> dict[str, str]:
 
 
 @app.post("/documents/{doc_id}/reindex")
-def reindex_document(doc_id: str) -> dict[str, object]:
+async def reindex_document(doc_id: str, request: Request) -> dict[str, object]:
     document = DOCUMENT_STORE.get(doc_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -846,6 +943,11 @@ def reindex_document(doc_id: str) -> dict[str, object]:
         raise HTTPException(status_code=400, detail="File must be UTF-8 encoded text") from exc
 
     chunks = _chunk_text(text)
+    configured_entity_types = DOCUMENT_ENTITY_TYPES.get(doc_id, [])
+    if "application/json" in request.headers.get("content-type", ""):
+        payload = await request.json()
+        configured_entity_types = _parse_entity_types(json.dumps(payload.get("entity_types", [])))
+    DOCUMENT_ENTITY_TYPES[doc_id] = configured_entity_types
 
     old_chunk_ids = [chunk_id for chunk_id, chunk in CHUNK_STORE.items() if chunk["doc_id"] == doc_id]
     for chunk_id in old_chunk_ids:
@@ -863,7 +965,7 @@ def reindex_document(doc_id: str) -> dict[str, object]:
                 id=chunk_id,
                 content=chunk_text,
                 source=doc_id,
-                entities=_extract_entities(chunk_text),
+                entities=_extract_entities(chunk_text, candidates=configured_entity_types),
             )
         )
 
