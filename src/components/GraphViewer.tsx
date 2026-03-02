@@ -1,4 +1,6 @@
-import ForceGraph2D from 'react-force-graph';
+import { useEffect, useMemo, useRef } from 'react';
+
+import ForceGraph2D, { type ForceGraphMethods } from 'react-force-graph';
 
 type GraphNode = {
   id: string | number;
@@ -35,11 +37,30 @@ const getNodeColor = (node: GraphNode): string => {
 };
 
 export const GraphViewer = ({ nodes, edges }: GraphViewerProps) => {
+  const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
+  const hasAutoFittedRef = useRef(false);
+  const graphData = useMemo(() => ({ nodes, links: edges }), [nodes, edges]);
+
+  useEffect(() => {
+    hasAutoFittedRef.current = false;
+  }, [graphData]);
+
+  const fitGraphToViewport = () => {
+    if (hasAutoFittedRef.current || !graphRef.current || nodes.length === 0) {
+      return;
+    }
+
+    graphRef.current.zoomToFit(400, 40);
+    hasAutoFittedRef.current = true;
+  };
+
   return (
     <ForceGraph2D
-      graphData={{ nodes, links: edges }}
+      ref={graphRef}
+      graphData={graphData}
       nodeLabel="id"
       nodeAutoColorBy="type"
+      onEngineStop={fitGraphToViewport}
       nodeCanvasObject={(node, ctx, globalScale) => {
         const graphNode = node as GraphNode;
         const label = String(graphNode.id);
