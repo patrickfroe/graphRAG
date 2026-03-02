@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
 from uuid import uuid4
@@ -31,12 +31,17 @@ class Document:
     id: str
     content: str
     source: str
+    entities: list[dict[str, str]] = field(default_factory=list)
 
 
 class IngestRequest(BaseModel):
     documents: List[str | dict[str, str]] = Field(
         default_factory=list,
         description="Documents to store as plain strings or objects with text/content",
+    )
+    entity_candidates: List[str] = Field(
+        default_factory=lambda: ["person", "company"],
+        description="Entity candidate types to extract during ingestion (person, company)",
     )
 
 
@@ -65,6 +70,7 @@ class ChatRequest(BaseModel):
     use_graph: bool = True
     use_vector: bool = True
     return_debug: bool = True
+    entity_candidates: List[str] = Field(default_factory=lambda: ["person", "company"])
 
     @model_validator(mode="after")
     def ensure_query_present(self) -> "ChatRequest":
@@ -154,6 +160,10 @@ GRAPH_DOCUMENT_MAX_NODES = 200
 GRAPH_DOCUMENT_MAX_EDGES = 400
 
 _BULLET_PATTERN = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
+_PERSON_PATTERN = re.compile(r"\b([A-Z][a-z]+\s+[A-Z][a-z]+)\b")
+_COMPANY_PATTERN = re.compile(
+    r"\b([A-Z][A-Za-z&.-]*(?:\s+[A-Z][A-Za-z&.-]*)*\s+(?:Inc|LLC|Ltd|GmbH|AG|Corp|Corporation|Company))\b"
+)
 
 
 def _is_list_block(block: str) -> bool:
@@ -246,6 +256,41 @@ def _chunk_text(text: str) -> list[str]:
     return _merge_short_chunks(chunks)
 
 
+def _normalize_entity_candidates(candidates: list[str] | None) -> set[str]:
+    if not candidates:
+        return {"person", "company"}
+    normalized = {candidate.strip().lower() for candidate in candidates if candidate.strip()}
+    return normalized or {"person", "company"}
+
+
+def _extract_entities(text: str, candidates: list[str] | None = None) -> list[dict[str, str]]:
+    requested = _normalize_entity_candidates(candidates)
+    entities: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    if "company" in requested:
+        for match in _COMPANY_PATTERN.findall(text):
+            key = match.strip()
+            dedupe_key = ("company", key.lower())
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            entities.append({"key": f"company:{key.lower()}", "name": key, "type": "company"})
+
+    if "person" in requested:
+        for match in _PERSON_PATTERN.findall(text):
+            name = match.strip()
+            if _COMPANY_PATTERN.search(name):
+                continue
+            dedupe_key = ("person", name.lower())
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            entities.append({"key": f"person:{name.lower()}", "name": name, "type": "person"})
+
+    return entities
+
+
 def _persist_document_neo4j(document: DocumentResponse, chunks: list[tuple[str, str]]) -> None:
     if not (GraphDatabase and NEO4J_URI and NEO4J_USER and NEO4J_PASSWORD):
         return
@@ -310,14 +355,21 @@ def _delete_embeddings_milvus(doc_id: str) -> None:
         return
 
 
-def retrieval(question: str, k: int = 3) -> List[Document]:
+def retrieval(question: str, k: int = 3, entity_candidates: list[str] | None = None) -> List[Document]:
     """Return the top-k most relevant docs using a simple token overlap score."""
     question_terms = set(question.lower().split())
     scored: List[tuple[int, Document]] = []
 
+    query_entities = {
+        entity["key"] for entity in _extract_entities(question, candidates=entity_candidates)
+    }
+
     for doc in VECTOR_STORE:
         doc_terms = set(doc.content.lower().split())
-        score = len(question_terms & doc_terms)
+        lexical_score = len(question_terms & doc_terms)
+        doc_entity_keys = {entity["key"] for entity in doc.entities}
+        entity_score = len(query_entities & doc_entity_keys) * 3
+        score = lexical_score + entity_score
         scored.append((score, doc))
 
     scored.sort(key=lambda item: item[0], reverse=True)
@@ -486,11 +538,13 @@ def _parse_multipart_files(body: bytes, content_type: str) -> list[tuple[str, by
 @app.post("/ingest", response_model=IngestResponse)
 async def ingest(request: Request) -> IngestResponse:
     documents: List[str] = []
+    entity_candidates = ["person", "company"]
     content_type = request.headers.get("content-type", "")
 
     if "application/json" in content_type:
         body = await request.json()
         payload = IngestRequest.model_validate(body)
+        entity_candidates = payload.entity_candidates
         for item in payload.documents:
             if isinstance(item, str):
                 text = item.strip()
@@ -530,7 +584,14 @@ async def ingest(request: Request) -> IngestResponse:
         raise HTTPException(status_code=400, detail="No documents provided")
 
     for i, content in enumerate(documents, start=len(VECTOR_STORE) + 1):
-        VECTOR_STORE.append(Document(id=str(i), content=content, source=f"doc-{i}"))
+        VECTOR_STORE.append(
+            Document(
+                id=str(i),
+                content=content,
+                source=f"doc-{i}",
+                entities=_extract_entities(content, candidates=entity_candidates),
+            )
+        )
 
     return IngestResponse(ingested=len(documents))
 
@@ -591,7 +652,14 @@ async def upload_document(request: Request) -> DocumentResponse:
         chunk_id = str(uuid4())
         chunk_pairs.append((chunk_id, chunk_text))
         CHUNK_STORE[chunk_id] = {"doc_id": doc_id, "text": chunk_text}
-        VECTOR_STORE.append(Document(id=chunk_id, content=chunk_text, source=doc_id))
+        VECTOR_STORE.append(
+            Document(
+                id=chunk_id,
+                content=chunk_text,
+                source=doc_id,
+                entities=_extract_entities(chunk_text),
+            )
+        )
 
     _persist_document_neo4j(document, chunk_pairs)
 
@@ -663,7 +731,14 @@ def reindex_document(doc_id: str) -> dict[str, object]:
         chunk_id = str(uuid4())
         chunk_pairs.append((chunk_id, chunk_text))
         CHUNK_STORE[chunk_id] = {"doc_id": doc_id, "text": chunk_text}
-        VECTOR_STORE.append(Document(id=chunk_id, content=chunk_text, source=doc_id))
+        VECTOR_STORE.append(
+            Document(
+                id=chunk_id,
+                content=chunk_text,
+                source=doc_id,
+                entities=_extract_entities(chunk_text),
+            )
+        )
 
     updated_document = document.model_copy(update={"chunk_count": len(chunks)})
     DOCUMENT_STORE[doc_id] = updated_document
@@ -678,7 +753,7 @@ def reindex_document(doc_id: str) -> dict[str, object]:
 @app.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest) -> ChatResponse:
     question = payload.query or payload.question or ""
-    docs = retrieval(question, k=payload.top_k)
+    docs = retrieval(question, k=payload.top_k, entity_candidates=payload.entity_candidates)
     answer = generate_answer(question, docs)
 
     sources = [
@@ -701,11 +776,28 @@ def chat(payload: ChatRequest) -> ChatResponse:
     seed_entity_keys = [source.doc_id for source in sources]
     preview_data = build_graph_preview(seed_entity_keys)
 
+    response_entities: list[EntityItem] = []
+    seen_entity_keys: set[str] = set()
+    for doc in docs:
+        for entity in doc.entities:
+            if entity["key"] in seen_entity_keys:
+                continue
+            seen_entity_keys.add(entity["key"])
+            response_entities.append(
+                EntityItem(
+                    key=entity["key"],
+                    name=entity["name"],
+                    type=entity["type"],
+                    salience=1.0,
+                    source_chunk_ids=[doc.id],
+                )
+            )
+
     return ChatResponse(
         answer=answer,
         citations=citations,
         sources=sources,
-        entities=[],
+        entities=response_entities,
         graph_evidence=GraphEvidenceItem(
             seed_entity_keys=seed_entity_keys,
             preview=GraphPreviewItem(**preview_data),
