@@ -13,6 +13,7 @@ from neo4j import GraphDatabase
 from pydantic import BaseModel, Field, model_validator
 
 from config import CHUNK_SIZE, MILVUS_URI, NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
+from config import CHUNK_BULLET_LISTS_ENABLED, CHUNK_MIN_CHARS, CHUNK_PARAGRAPHS_ENABLED
 
 try:
     from neo4j import GraphDatabase
@@ -152,36 +153,97 @@ GRAPH_PREVIEW_DEFAULT_EDGE_LIMIT = 100
 GRAPH_DOCUMENT_MAX_NODES = 200
 GRAPH_DOCUMENT_MAX_EDGES = 400
 
+_BULLET_PATTERN = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
 
-def _chunk_text(text: str) -> list[str]:
-    paragraph_chunks = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
-    if not paragraph_chunks:
-        paragraph_chunks = [text.strip()]
+
+def _is_list_block(block: str) -> bool:
+    lines = [line for line in (part.strip() for part in block.splitlines()) if line]
+    return bool(lines) and all(_BULLET_PATTERN.match(line) for line in lines)
+
+
+def _split_text_by_size(text: str) -> list[str]:
+    if len(text) <= CHUNK_SIZE:
+        return [text]
 
     chunks: list[str] = []
-    for paragraph in paragraph_chunks:
-        if len(paragraph) <= CHUNK_SIZE:
-            chunks.append(paragraph)
+    words = text.split()
+    current_words: list[str] = []
+    current_length = 0
+    for word in words:
+        projected_length = current_length + len(word) + (1 if current_words else 0)
+        if current_words and projected_length > CHUNK_SIZE:
+            chunks.append(" ".join(current_words))
+            current_words = [word]
+            current_length = len(word)
             continue
 
-        words = paragraph.split()
-        current_words: list[str] = []
-        current_length = 0
-        for word in words:
-            projected_length = current_length + len(word) + (1 if current_words else 0)
-            if current_words and projected_length > CHUNK_SIZE:
-                chunks.append(" ".join(current_words))
-                current_words = [word]
-                current_length = len(word)
-                continue
+        current_words.append(word)
+        current_length = projected_length
 
-            current_words.append(word)
-            current_length = projected_length
-
-        if current_words:
-            chunks.append(" ".join(current_words))
+    if current_words:
+        chunks.append(" ".join(current_words))
 
     return chunks
+
+
+def _merge_short_chunks(chunks: list[str]) -> list[str]:
+    min_chars = max(CHUNK_MIN_CHARS, 1)
+    if min_chars <= 1:
+        return chunks
+
+    merged: list[str] = []
+    pending = ""
+    for chunk in chunks:
+        if len(chunk) < min_chars:
+            pending = f"{pending}\n\n{chunk}".strip() if pending else chunk
+            continue
+
+        if pending:
+            combined = f"{pending}\n\n{chunk}".strip()
+            if len(combined) <= CHUNK_SIZE:
+                merged.append(combined)
+                pending = ""
+                continue
+            merged.extend(_split_text_by_size(pending))
+            pending = ""
+
+        merged.append(chunk)
+
+    if pending:
+        if merged:
+            combined = f"{merged[-1]}\n\n{pending}".strip()
+            if len(combined) <= CHUNK_SIZE:
+                merged[-1] = combined
+            else:
+                merged.extend(_split_text_by_size(pending))
+        else:
+            merged.extend(_split_text_by_size(pending))
+
+    return merged
+
+
+def _chunk_text(text: str) -> list[str]:
+    raw_blocks = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
+    if not raw_blocks:
+        raw_blocks = [text.strip()]
+
+    chunks: list[str] = []
+    fallback_blocks: list[str] = []
+    for block in raw_blocks:
+        is_list = _is_list_block(block)
+        should_chunk_block = CHUNK_BULLET_LISTS_ENABLED if is_list else CHUNK_PARAGRAPHS_ENABLED
+        if should_chunk_block:
+            if fallback_blocks:
+                chunks.extend(_split_text_by_size("\n\n".join(fallback_blocks)))
+                fallback_blocks = []
+            chunks.extend(_split_text_by_size(block))
+        else:
+            fallback_blocks.append(block)
+
+    if fallback_blocks:
+        chunks.extend(_split_text_by_size("\n\n".join(fallback_blocks)))
+
+    return _merge_short_chunks(chunks)
 
 
 def _persist_document_neo4j(document: DocumentResponse, chunks: list[tuple[str, str]]) -> None:

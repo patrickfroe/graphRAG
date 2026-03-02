@@ -257,8 +257,9 @@ def test_chunk_size_is_configurable(monkeypatch) -> None:
 
     assert chunks == ["eins zwei", "drei vier"]
 
-def test_document_management_lifecycle(tmp_path: Path) -> None:
+def test_document_management_lifecycle(tmp_path: Path, monkeypatch) -> None:
     main.UPLOAD_DIR = tmp_path
+    monkeypatch.setattr(main, "CHUNK_MIN_CHARS", 1)
 
     upload_response = client.post(
         "/documents/upload",
@@ -298,3 +299,36 @@ def test_document_management_lifecycle(tmp_path: Path) -> None:
 
     not_found_response = client.get(f"/documents/{doc_id}")
     assert not_found_response.status_code == 404
+
+
+def test_chunk_paragraphs_toggle_is_configurable(monkeypatch) -> None:
+    monkeypatch.setattr(main, "CHUNK_SIZE", 50)
+    monkeypatch.setattr(main, "CHUNK_PARAGRAPHS_ENABLED", False)
+    monkeypatch.setattr(main, "CHUNK_BULLET_LISTS_ENABLED", True)
+    monkeypatch.setattr(main, "CHUNK_MIN_CHARS", 1)
+
+    chunks = main._chunk_text("Erster Absatz\n\nZweiter Absatz")
+
+    assert chunks == ["Erster Absatz\n\nZweiter Absatz"]
+
+
+def test_chunk_bullet_lists_toggle_is_configurable(monkeypatch) -> None:
+    monkeypatch.setattr(main, "CHUNK_SIZE", 30)
+    monkeypatch.setattr(main, "CHUNK_PARAGRAPHS_ENABLED", True)
+    monkeypatch.setattr(main, "CHUNK_BULLET_LISTS_ENABLED", False)
+    monkeypatch.setattr(main, "CHUNK_MIN_CHARS", 1)
+
+    chunks = main._chunk_text("Einleitung\n\n- Punkt eins\n- Punkt zwei")
+
+    assert chunks == ["Einleitung", "- Punkt eins\n- Punkt zwei"]
+
+
+def test_chunk_min_chars_is_configurable(monkeypatch) -> None:
+    monkeypatch.setattr(main, "CHUNK_SIZE", 100)
+    monkeypatch.setattr(main, "CHUNK_PARAGRAPHS_ENABLED", True)
+    monkeypatch.setattr(main, "CHUNK_BULLET_LISTS_ENABLED", True)
+    monkeypatch.setattr(main, "CHUNK_MIN_CHARS", 20)
+
+    chunks = main._chunk_text("Kurz\n\nDieser Absatz ist ausreichend lang")
+
+    assert chunks == ["Kurz\n\nDieser Absatz ist ausreichend lang"]
