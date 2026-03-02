@@ -70,6 +70,39 @@ def test_ingest_accepts_object_documents() -> None:
     assert ingest_response.json()["ingested"] == 2
 
 
+
+
+def test_ingest_extracts_person_and_company_entities() -> None:
+    ingest_response = client.post(
+        "/ingest",
+        json={
+            "documents": ["Alice Johnson met with Acme GmbH leadership"],
+            "entity_candidates": ["person", "company"],
+        },
+    )
+
+    assert ingest_response.status_code == 200
+    assert ingest_response.json()["ingested"] == 1
+    assert VECTOR_STORE
+    extracted = VECTOR_STORE[0].entities
+    assert any(entity["type"] == "person" and entity["name"] == "Alice Johnson" for entity in extracted)
+    assert any(entity["type"] == "company" and entity["name"] == "Acme GmbH" for entity in extracted)
+
+
+def test_chat_returns_detected_entities() -> None:
+    client.post(
+        "/ingest",
+        json={
+            "documents": ["Alice Johnson met with Acme GmbH leadership"],
+            "entity_candidates": ["person", "company"],
+        },
+    )
+
+    chat_response = client.post("/chat", json={"query": "Acme GmbH", "top_k": 1})
+
+    assert chat_response.status_code == 200
+    entities = chat_response.json()["entities"]
+    assert any(entity["type"] == "company" and entity["name"] == "Acme GmbH" for entity in entities)
 def test_graph_preview_and_evidence_endpoints() -> None:
     ingest_response = client.post(
         "/ingest",
