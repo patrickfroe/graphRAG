@@ -103,6 +103,20 @@ def test_chat_returns_detected_entities() -> None:
     assert chat_response.status_code == 200
     entities = chat_response.json()["entities"]
     assert any(entity["type"] == "company" and entity["name"] == "Acme GmbH" for entity in entities)
+
+
+def test_entity_extraction_filters_german_false_positive_persons() -> None:
+    extracted = main._extract_entities(
+        "Der Hauptsitz befindet sich in Berlin. Im Jahr 2024 übernahm Alice Johnson die Leitung.",
+        candidates=["person"],
+    )
+
+    names = {entity["name"] for entity in extracted}
+    assert "Alice Johnson" in names
+    assert "Der Hauptsitz" not in names
+    assert "Im Jahr" not in names
+
+
 def test_graph_preview_and_evidence_endpoints() -> None:
     ingest_response = client.post(
         "/ingest",
