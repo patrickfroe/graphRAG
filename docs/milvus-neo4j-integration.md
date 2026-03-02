@@ -57,6 +57,9 @@ MILVUS_COLLECTION=documents
 
 # Retrieval
 TOP_K=5
+
+# Chunking (Zeichen pro Chunk, Standard: 1200)
+CHUNK_SIZE=1200
 ```
 
 > Die Default-Werte im Code entsprechen bereits der Compose-Konfiguration.

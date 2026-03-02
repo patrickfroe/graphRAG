@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from neo4j import GraphDatabase
 from pydantic import BaseModel, Field, model_validator
 
-from config import MILVUS_URI, NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
+from config import CHUNK_SIZE, MILVUS_URI, NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
 
 try:
     from neo4j import GraphDatabase
@@ -154,8 +154,34 @@ GRAPH_DOCUMENT_MAX_EDGES = 400
 
 
 def _chunk_text(text: str) -> list[str]:
-    chunks = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
-    return chunks or [text.strip()]
+    paragraph_chunks = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
+    if not paragraph_chunks:
+        paragraph_chunks = [text.strip()]
+
+    chunks: list[str] = []
+    for paragraph in paragraph_chunks:
+        if len(paragraph) <= CHUNK_SIZE:
+            chunks.append(paragraph)
+            continue
+
+        words = paragraph.split()
+        current_words: list[str] = []
+        current_length = 0
+        for word in words:
+            projected_length = current_length + len(word) + (1 if current_words else 0)
+            if current_words and projected_length > CHUNK_SIZE:
+                chunks.append(" ".join(current_words))
+                current_words = [word]
+                current_length = len(word)
+                continue
+
+            current_words.append(word)
+            current_length = projected_length
+
+        if current_words:
+            chunks.append(" ".join(current_words))
+
+    return chunks
 
 
 def _persist_document_neo4j(document: DocumentResponse, chunks: list[tuple[str, str]]) -> None:
