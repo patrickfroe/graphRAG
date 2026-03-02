@@ -27,8 +27,57 @@ const NODE_COLORS: Record<string, string> = {
   event: "#8b5cf6",
 };
 
+type PreviewLike = GraphPreview & {
+  entities?: Array<Record<string, unknown>>;
+  relations?: Array<Record<string, unknown>>;
+  relationships?: Array<Record<string, unknown>>;
+};
+
+function readString(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
+  return "";
+}
+
+function normalizeNodes(preview?: GraphPreview): Array<{ id: string; label: string; type: string }> {
+  const typedPreview = preview as PreviewLike | undefined;
+  const rawNodes = (typedPreview?.nodes ?? typedPreview?.entities ?? []) as Array<Record<string, unknown>>;
+
+  return rawNodes
+    .map((rawNode) => {
+      const id = readString(rawNode.id ?? rawNode.key).trim();
+      if (!id) return null;
+
+      const label = readString(rawNode.label ?? rawNode.name).trim() || id;
+      const type = readString(rawNode.type).trim() || "entity";
+
+      return { id, label, type };
+    })
+    .filter((node): node is { id: string; label: string; type: string } => node !== null);
+}
+
+function normalizeEdges(preview?: GraphPreview): Array<{ id: string; source: string; target: string; label: string }> {
+  const typedPreview = preview as PreviewLike | undefined;
+  const rawEdges = (typedPreview?.edges ?? typedPreview?.relations ?? typedPreview?.relationships ?? []) as Array<
+    Record<string, unknown>
+  >;
+
+  return rawEdges
+    .map((rawEdge, index) => {
+      const source = readString(rawEdge.source ?? rawEdge.from ?? rawEdge.start).trim();
+      const target = readString(rawEdge.target ?? rawEdge.to ?? rawEdge.end).trim();
+      if (!source || !target) return null;
+
+      const label = readString(rawEdge.label ?? rawEdge.type ?? rawEdge.predicate).trim() || "related_to";
+      const id = readString(rawEdge.id) || `${source}-${target}-${index}`;
+
+      return { id, source, target, label };
+    })
+    .filter((edge): edge is { id: string; source: string; target: string; label: string } => edge !== null);
+}
+
 function buildPositionedNodes(preview?: GraphPreview): PositionedNode[] {
-  const nodes = preview?.nodes ?? [];
+  const nodes = normalizeNodes(preview);
 
   if (nodes.length === 0) {
     return [];
@@ -55,7 +104,7 @@ export default function GraphModal({ open, preview, onClose }: GraphModalProps) 
   if (!open) return null;
 
   const nodes = buildPositionedNodes(preview);
-  const edges = preview?.edges ?? [];
+  const edges = normalizeEdges(preview);
   const nodeLookup = new Map(nodes.map((node) => [node.id, node]));
 
   return (
