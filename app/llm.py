@@ -10,18 +10,36 @@ class LLMService:
         self.client = OpenAI(api_key=settings.openai_api_key)
 
     def answer(self, query: str, context_chunks: list[str]) -> str:
-        context = "\n\n".join(context_chunks) if context_chunks else "Kein Kontext gefunden."
+        rendered_chunks = [
+            f"[CHUNK {index}]\n{chunk.strip()}"
+            for index, chunk in enumerate(context_chunks, start=1)
+            if chunk and chunk.strip()
+        ]
+        context = "\n\n".join(rendered_chunks) if rendered_chunks else "(keine Chunks gefunden)"
         prompt = (
-            "Du bist ein hilfreicher Assistent. Nutze den bereitgestellten Kontext für deine Antwort.\n"
-            f"Kontext:\n{context}\n\n"
-            f"Frage: {query}"
+            "Frage des Nutzers:\n"
+            f"{query}\n\n"
+            "Verfügbare Chunks:\n"
+            f"{context}\n\n"
+            "Anweisungen:\n"
+            "1) Antworte ausschließlich mit Informationen aus den verfügbaren Chunks.\n"
+            "2) Erfinde keine Fakten, Namen, Zahlen oder Zusammenhänge.\n"
+            "3) Wenn die Chunks nicht ausreichen, sage klar: 'Dazu enthalten die bereitgestellten Chunks keine verlässliche Information.'\n"
+            "4) Formuliere die Antwort kurz und klar auf Deutsch."
         )
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system", "content": "Antworte präzise und ehrlich auf Deutsch."},
+                {
+                    "role": "system",
+                    "content": (
+                        "Du bist ein strikt quellgebundener Assistent. "
+                        "Du darfst nur Informationen aus den gelieferten Chunks verwenden "
+                        "und bei fehlender Evidenz keine Vermutungen äußern."
+                    ),
+                },
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.2,
+            temperature=0.0,
         )
         return response.choices[0].message.content or ""
