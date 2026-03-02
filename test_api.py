@@ -272,15 +272,30 @@ def test_graph_document_all_returns_cross_document_graph(monkeypatch) -> None:
     assert captured_params == {}
     assert response.json()["nodes"]
     assert response.json()["edges"]
-def test_graph_document_requires_neo4j_configuration(monkeypatch) -> None:
+def test_graph_document_falls_back_without_neo4j_configuration(monkeypatch) -> None:
     monkeypatch.setattr(main, "NEO4J_URI", None)
     monkeypatch.setattr(main, "NEO4J_USER", None)
     monkeypatch.setattr(main, "NEO4J_PASSWORD", None)
 
-    response = client.get("/graph/document/doc-1")
+    client.post(
+        "/ingest",
+        json={
+            "documents": ["Alice Johnson met with Acme GmbH leadership"],
+            "entity_candidates": ["person", "company"],
+        },
+    )
 
-    assert response.status_code == 500
-    assert response.json() == {"detail": "Neo4j configuration is missing"}
+    response = client.get("/graph/document/all")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["nodes"]) == 2
+    assert {node["id"] for node in payload["nodes"]} == {
+        "person:alice johnson",
+        "company:acme gmbh",
+    }
+    assert len(payload["edges"]) == 1
+    assert payload["edges"][0]["label"] == "related_to"
 
 
 def test_chunk_size_is_configurable(monkeypatch) -> None:
