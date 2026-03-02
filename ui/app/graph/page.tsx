@@ -15,6 +15,7 @@ function parseSeedInput(input: string): string[] {
 
 export default function GraphPage() {
   const [seedInput, setSeedInput] = useState("");
+  const [showFullGraph, setShowFullGraph] = useState(false);
   const [preview, setPreview] = useState<GraphPreview | undefined>(undefined);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,14 +41,22 @@ export default function GraphPage() {
   const seedKeys = useMemo(() => parseSeedInput(seedInput), [seedInput]);
 
   const handleLoad = async () => {
+    if (!showFullGraph && seedKeys.length === 0) {
+      setError("Bitte Seed Keys eingeben oder 'Gesamten Graph laden' aktivieren.");
+      setPreview(undefined);
+      return;
+    }
+
     setError(null);
     setLoading(true);
 
     try {
-      const response = await graphPreview(seedKeys);
+      const requestSeedKeys = showFullGraph ? [] : seedKeys;
+      const response = await graphPreview(requestSeedKeys);
       setPreview(response);
+      setModalOpen(response.nodes.length > 0);
       window.localStorage.setItem("graph-preview", JSON.stringify(response));
-      window.localStorage.setItem("graph-seed-keys", JSON.stringify(seedKeys));
+      window.localStorage.setItem("graph-seed-keys", JSON.stringify(requestSeedKeys));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Graph preview failed");
       setPreview(undefined);
@@ -71,7 +80,16 @@ export default function GraphPage() {
           value={seedInput}
           onChange={(event) => setSeedInput(event.target.value)}
           placeholder="ORG:neo4j, TECH:graph"
+          disabled={showFullGraph}
         />
+        <label className="inline-flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={showFullGraph}
+            onChange={(event) => setShowFullGraph(event.target.checked)}
+          />
+          Gesamten Graph laden
+        </label>
         <div className="flex gap-2">
           <button
             type="button"
