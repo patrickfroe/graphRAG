@@ -61,6 +61,7 @@ function findDocumentRoot(nodes: GraphNode[], docId: string): string | null {
   return (
     nodes.find((node) => node.type === "Document" && (node.id === docId || String(node.doc_id ?? "") === docId))?.id ??
     nodes.find((node) => node.type === "Document")?.id ??
+    nodes[0]?.id ??
     null
   );
 }
@@ -196,7 +197,9 @@ export default function GraphViewerPage({ params }: { params: { doc_id: string }
   return (
     <section className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-semibold">Graph Viewer: {docId}</h2>
+        <h2 className="text-2xl font-semibold">
+          Graph Viewer: {docId === "all" ? "Alle Dokumente" : docId}
+        </h2>
         <div className="flex gap-2">
           <button
             type="button"
