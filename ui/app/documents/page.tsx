@@ -11,6 +11,39 @@ const queryKey = ["documents"];
 const ENTITY_TYPES_STORAGE_KEY = "documents-entity-types";
 const DEFAULT_ENTITY_TYPES = ["ORG", "PERSON", "PRODUCT", "TECH", "LOCATION"];
 
+type DisplayEntity = {
+  key: string;
+  name: string;
+  type: string;
+  mentions: number;
+};
+
+function normalizeEntityType(entity: DisplayEntity): string {
+  const keyPrefix = entity.key.split(":")[0]?.trim().toLowerCase();
+  if (keyPrefix) {
+    return keyPrefix.toUpperCase();
+  }
+  return entity.type.trim().toUpperCase() || "UNKNOWN";
+}
+
+function groupEntitiesByType(entities: DisplayEntity[]): Array<{ type: string; entities: DisplayEntity[] }> {
+  const grouped = new Map<string, DisplayEntity[]>();
+
+  for (const entity of entities) {
+    const type = normalizeEntityType(entity);
+    grouped.set(type, [...(grouped.get(type) ?? []), entity]);
+  }
+
+  return [...grouped.entries()]
+    .sort(([typeA], [typeB]) => typeA.localeCompare(typeB))
+    .map(([type, groupedEntities]) => ({
+      type,
+      entities: groupedEntities
+        .slice()
+        .sort((entityA, entityB) => entityA.name.localeCompare(entityB.name, undefined, { sensitivity: "base" })),
+    }));
+}
+
 function formatDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -242,7 +275,11 @@ export default function DocumentsPage() {
               </tr>
             )}
 
-            {documents.map((document) => (
+            {documents.map((document) => {
+              const groupedEntities = groupEntitiesByType(document.extracted_entities);
+              const totalDisplayed = groupedEntities.reduce((sum, group) => sum + group.entities.length, 0);
+
+              return (
               <tr key={document.id} className="border-t align-middle">
                 <td className="px-3 py-2">{document.title}</td>
                 <td className="px-3 py-2">{document.file_name}</td>
@@ -252,14 +289,24 @@ export default function DocumentsPage() {
                   <div className="space-y-1">
                     <div className="text-xs font-medium">{document.extracted_entity_count} found</div>
                     {document.extracted_entities.length > 0 ? (
-                      <div className="flex max-w-[360px] flex-wrap gap-1">
-                        {document.extracted_entities.slice(0, 6).map((entity) => (
-                          <span key={entity.key} className="rounded-full border px-2 py-0.5 text-[10px]">
-                            {entity.name} <span className="text-muted-foreground">({entity.type}, {entity.mentions})</span>
-                          </span>
+                      <div className="max-w-[360px] space-y-1">
+                        {groupedEntities.map((group) => (
+                          <div key={group.type} className="space-y-1">
+                            <div className="text-[10px] font-semibold text-muted-foreground">{group.type}</div>
+                            <div className="flex flex-wrap gap-1">
+                              {group.entities.slice(0, 4).map((entity) => (
+                                <span key={entity.key} className="rounded-full border px-2 py-0.5 text-[10px]">
+                                  {entity.name} <span className="text-muted-foreground">({entity.mentions})</span>
+                                </span>
+                              ))}
+                              {group.entities.length > 4 && (
+                                <span className="text-[10px] text-muted-foreground">+{group.entities.length - 4} more</span>
+                              )}
+                            </div>
+                          </div>
                         ))}
-                        {document.extracted_entities.length > 6 && (
-                          <span className="text-[10px] text-muted-foreground">+{document.extracted_entities.length - 6} more</span>
+                        {document.extracted_entity_count > totalDisplayed && (
+                          <span className="text-[10px] text-muted-foreground">+{document.extracted_entity_count - totalDisplayed} more</span>
                         )}
                       </div>
                     ) : (
@@ -303,7 +350,8 @@ export default function DocumentsPage() {
                   </div>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
