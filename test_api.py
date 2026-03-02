@@ -176,6 +176,69 @@ def test_graph_document_returns_limited_graph_preview(monkeypatch) -> None:
     }
 
 
+
+
+def test_graph_document_all_returns_cross_document_graph(monkeypatch) -> None:
+    monkeypatch.setattr(main, "NEO4J_URI", "bolt://localhost:7687")
+    monkeypatch.setattr(main, "NEO4J_USER", "neo4j")
+    monkeypatch.setattr(main, "NEO4J_PASSWORD", "secret")
+
+    class FakeNode:
+        def __init__(self, node_id: int, name: str, label: str = "Entity") -> None:
+            self.id = node_id
+            self.labels = {label}
+            self._props = {"name": name}
+
+        def get(self, key: str):
+            return self._props.get(key)
+
+    class FakeRecord(dict):
+        pass
+
+    record = FakeRecord(
+        entities=[FakeNode(1, "Entity 1"), FakeNode(2, "Entity 2")],
+        neighbors=[FakeNode(3, "Neighbor 3")],
+        raw_edges=[
+            {"source": "1", "target": "2", "label": "REL_12"},
+            {"source": "2", "target": "3", "label": "REL_23"},
+        ],
+    )
+
+    captured_params: dict[str, str] = {}
+
+    class FakeResult:
+        def single(self):
+            return record
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def run(self, _query: str, **kwargs):
+            captured_params.update(kwargs)
+            return FakeResult()
+
+    class FakeDriver:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def session(self):
+            return FakeSession()
+
+    monkeypatch.setattr(main.GraphDatabase, "driver", lambda *_args, **_kwargs: FakeDriver())
+
+    response = client.get("/graph/document/all")
+
+    assert response.status_code == 200
+    assert captured_params == {}
+    assert response.json()["nodes"]
+    assert response.json()["edges"]
 def test_graph_document_requires_neo4j_configuration(monkeypatch) -> None:
     monkeypatch.setattr(main, "NEO4J_URI", None)
     monkeypatch.setattr(main, "NEO4J_USER", None)

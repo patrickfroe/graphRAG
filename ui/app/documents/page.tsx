@@ -95,17 +95,27 @@ export default function DocumentsPage() {
           <p className="text-muted-foreground">Manage uploaded documents and indexing actions.</p>
         </div>
 
-        <div>
-          <input ref={fileInputRef} type="file" className="hidden" onChange={handleUpload} disabled={uploadMutation.isPending} />
+        <div className="flex items-center gap-2">
           <button
             type="button"
-            className="inline-flex items-center gap-2 rounded bg-black px-4 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
-            onClick={handleSelectFile}
-            disabled={uploadMutation.isPending}
+            className="rounded border px-3 py-2 text-sm"
+            onClick={() => router.push("/graph/all")}
+            disabled={isMutating}
           >
-            {uploadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-            {uploadingLabel}
+            Gesamten Graph ansehen
           </button>
+          <div>
+            <input ref={fileInputRef} type="file" className="hidden" onChange={handleUpload} disabled={uploadMutation.isPending} />
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded bg-black px-4 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={handleSelectFile}
+              disabled={uploadMutation.isPending}
+            >
+              {uploadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              {uploadingLabel}
+            </button>
+          </div>
         </div>
       </div>
 

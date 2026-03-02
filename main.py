@@ -305,7 +305,22 @@ def fetch_document_graph_preview(
     if not NEO4J_URI or not NEO4J_USER or not NEO4J_PASSWORD:
         raise HTTPException(status_code=500, detail="Neo4j configuration is missing")
 
-    query = """
+    if doc_id == "all":
+        query = """
+    MATCH (d:Document)-[:HAS_CHUNK]->(c)-[:MENTIONS]->(e)
+    OPTIONAL MATCH (e)-[r]->(e2)
+    RETURN
+      collect(DISTINCT e) AS entities,
+      collect(DISTINCT e2) AS neighbors,
+      collect(DISTINCT {
+        source: toString(id(e)),
+        target: toString(id(e2)),
+        label: type(r)
+      }) AS raw_edges
+    """
+        query_params: dict[str, str] = {}
+    else:
+        query = """
     MATCH (d:Document {doc_id:$doc_id})-[:HAS_CHUNK]->(c)-[:MENTIONS]->(e)
     OPTIONAL MATCH (e)-[r]->(e2)
     RETURN
@@ -317,10 +332,11 @@ def fetch_document_graph_preview(
         label: type(r)
       }) AS raw_edges
     """
+        query_params = {"doc_id": doc_id}
 
     with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD)) as driver:
         with driver.session() as session:
-            record = session.run(query, doc_id=doc_id).single()
+            record = session.run(query, **query_params).single()
 
     if record is None:
         return GraphPreviewItem()
