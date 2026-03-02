@@ -216,6 +216,10 @@ def test_document_management_lifecycle(tmp_path: Path) -> None:
     assert update_response.status_code == 200
     assert update_response.json()["title"] == "Neuer Titel"
 
+    reindex_response = client.post(f"/documents/{doc_id}/reindex")
+    assert reindex_response.status_code == 200
+    assert reindex_response.json() == {"reindexed": True, "doc_id": doc_id, "chunk_count": 2}
+
     delete_response = client.delete(f"/documents/{doc_id}")
     assert delete_response.status_code == 200
     assert delete_response.json() == {"status": "deleted", "doc_id": doc_id}

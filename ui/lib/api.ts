@@ -36,6 +36,14 @@ export type DocumentGraphResponse = {
   edges: DocumentGraphEdge[];
 };
 
+type DocumentApiItem = {
+  doc_id: string;
+  title: string;
+  file_name: string;
+  uploaded_at: string;
+  chunk_count: number;
+};
+
 export type DocumentItem = {
   id: string;
   title: string;
@@ -125,21 +133,28 @@ export async function ingestDocuments(documents: string[]): Promise<{ ingested: 
 }
 
 export async function listDocuments(): Promise<DocumentItem[]> {
-  return requestJson<DocumentItem[]>(`${API_BASE}/documents`, { method: "GET" });
+  const documents = await requestJson<DocumentApiItem[]>(`${API_BASE}/documents`, { method: "GET" });
+  return documents.map((document) => ({
+    id: document.doc_id,
+    title: document.title,
+    file_name: document.file_name,
+    uploaded_at: document.uploaded_at,
+    chunk_count: document.chunk_count,
+  }));
 }
 
-export async function uploadDocument(file: File): Promise<{ id?: string }> {
+export async function uploadDocument(file: File): Promise<DocumentApiItem> {
   const formData = new FormData();
   formData.append("file", file);
 
-  return requestJson<{ id?: string }>(`${API_BASE}/documents/upload`, {
+  return requestJson<DocumentApiItem>(`${API_BASE}/documents/upload`, {
     method: "POST",
     body: formData,
   });
 }
 
-export async function deleteDocument(documentId: string): Promise<{ deleted: boolean }> {
-  return requestJson<{ deleted: boolean }>(`${API_BASE}/documents/${documentId}`, {
+export async function deleteDocument(documentId: string): Promise<{ status: string; doc_id: string }> {
+  return requestJson<{ status: string; doc_id: string }>(`${API_BASE}/documents/${documentId}`, {
     method: "DELETE",
   });
 }
