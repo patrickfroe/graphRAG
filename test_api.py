@@ -185,6 +185,15 @@ def test_graph_document_requires_neo4j_configuration(monkeypatch) -> None:
 
     assert response.status_code == 500
     assert response.json() == {"detail": "Neo4j configuration is missing"}
+
+
+def test_chunk_size_is_configurable(monkeypatch) -> None:
+    monkeypatch.setattr(main, "CHUNK_SIZE", 10)
+
+    chunks = main._chunk_text("eins zwei drei vier")
+
+    assert chunks == ["eins zwei", "drei vier"]
+
 def test_document_management_lifecycle(tmp_path: Path) -> None:
     main.UPLOAD_DIR = tmp_path
 

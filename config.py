@@ -13,3 +13,19 @@ NEO4J_USER = os.getenv("NEO4J_USER")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
 
 MILVUS_URI = os.getenv("MILVUS_URI")
+
+
+def _read_int_env(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return default
+
+    return value if value > 0 else default
+
+
+CHUNK_SIZE = _read_int_env("CHUNK_SIZE", 1200)
