@@ -319,6 +319,8 @@ def test_document_management_lifecycle(tmp_path: Path, monkeypatch) -> None:
     assert document["title"] == "report"
     assert document["file_name"] == "report.txt"
     assert document["chunk_count"] == 2
+    assert document["extracted_entity_count"] >= 0
+    assert isinstance(document["extracted_entities"], list)
 
     list_response = client.get("/documents")
     assert list_response.status_code == 200
@@ -329,6 +331,7 @@ def test_document_management_lifecycle(tmp_path: Path, monkeypatch) -> None:
     get_response = client.get(f"/documents/{doc_id}")
     assert get_response.status_code == 200
     assert get_response.json()["chunk_count"] == 2
+    assert "extracted_entities" in get_response.json()
 
     update_response = client.put(
         f"/documents/{doc_id}",
