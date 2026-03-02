@@ -34,6 +34,8 @@ export type DocumentGraphEdge = {
 export type DocumentGraphResponse = {
   nodes: DocumentGraphNode[];
   edges: DocumentGraphEdge[];
+};
+
 export type DocumentItem = {
   id: string;
   title: string;
